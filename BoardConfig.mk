@@ -39,6 +39,11 @@ BOARD_USERDATAIMAGE_PARTITION_SIZE := 4441767936
 
 # Recovery: the 8MB RECOVERY partition cannot hold the LineageOS recovery,
 # flashing is done with Odin (see docs/RECOVERY.md)
+# Root folders: only /efs is mounted. The common tree also creates /misc
+# (a raw partition here) and /preload (HIDDEN is our /vendor), which have
+# no SELinux label in LineageOS-UL and break the system image.
+BOARD_ROOT_EXTRA_FOLDERS := efs
+
 TARGET_NO_RECOVERY := true
 TARGET_RECOVERY_FSTAB := $(DEVICE_PATH)/rootdir/fstab.smdk4x12
 RECOVERY_FSTAB_VERSION := 2
