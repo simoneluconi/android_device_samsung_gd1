@@ -1,0 +1,23 @@
+# GC100 device blobs for vendor/samsung/gd1.
+# Source dir layout (tools: see CLAUDE.md "vendor blobs"):
+#   vendor/  = html6405's LineageOS 21 i9300 vendor (stock I9300XXUGMJ9)
+#   system/  = EK-GC100 stock GC100XXBMC4 /system dump
+
+# RIL - XMM6262, same modem family as the i9300 (from the i9300 LOS21 vendor, used with libsecril-shim)
+vendor/bin/cbd
+vendor/lib/libsec-ril.so
+
+# Wi-Fi - BCM4334 firmware and the GC100's own NVRAM (board RF calibration)
+system/etc/wifi/bcmdhd_apsta.bin_b2:vendor/etc/wifi/bcmdhd_apsta.bin_b2
+system/etc/wifi/bcmdhd_mfg.bin_b2:vendor/etc/wifi/bcmdhd_mfg.bin_b2
+system/etc/wifi/bcmdhd_p2p.bin_b2:vendor/etc/wifi/bcmdhd_p2p.bin_b2
+system/etc/wifi/bcmdhd_sta.bin_b2:vendor/etc/wifi/bcmdhd_sta.bin_b2
+system/etc/wifi/nvram_mfg.txt:vendor/etc/wifi/nvram_mfg.txt
+system/etc/wifi/nvram_mfg.txt_murata:vendor/etc/wifi/nvram_mfg.txt_murata
+system/etc/wifi/nvram_net.txt:vendor/etc/wifi/nvram_net.txt
+system/etc/wifi/nvram_net.txt_murata:vendor/etc/wifi/nvram_net.txt_murata
+
+# Bluetooth - BCM4334 patchram
+system/bin/bcm4334.hcd:vendor/firmware/bcm4334.hcd
+system/bin/bcm4334_murata.hcd:vendor/firmware/bcm4334_murata.hcd
+system/bin/bcm4334_semco.hcd:vendor/firmware/bcm4334_semco.hcd
