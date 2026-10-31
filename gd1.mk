@@ -5,6 +5,11 @@
 
 LOCAL_PATH := device/samsung/gd1
 
+# Never write the PARAM partition (bootloader environment, see the
+# anti-brick rules): skip smdk4412-common's param.sh, which would flash
+# /vendor/param.lfs over it on first boot.
+SMDK4412_NO_PARAM_SCRIPT := true
+
 # Overlay
 DEVICE_PACKAGE_OVERLAYS += $(LOCAL_PATH)/overlay
 
@@ -70,4 +75,6 @@ PRODUCT_ADB_KEYS := $(LOCAL_PATH)/bringup/adb_keys
 endif
 PRODUCT_SYSTEM_PROPERTIES += \
     persist.logd.logpersistd=logcatd
+PRODUCT_COPY_FILES += \
+    $(LOCAL_PATH)/bringup-tools/gd1-bringup.sh:$(TARGET_COPY_OUT_VENDOR)/bin/gd1-bringup.sh
 endif
