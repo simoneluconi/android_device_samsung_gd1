@@ -39,6 +39,10 @@ BOARD_USERDATAIMAGE_PARTITION_SIZE := 4441767936
 
 # Recovery: the 8MB RECOVERY partition cannot hold the LineageOS recovery,
 # flashing is done with Odin (see docs/RECOVERY.md)
+# SELinux permissive for bring-up (honoured on userdebug only): there is no
+# device policy for the vendor services yet. See docs/TODO.md.
+BOARD_KERNEL_CMDLINE += androidboot.selinux=permissive
+
 # Root folders: only /efs is mounted. The common tree also creates /misc
 # (a raw partition here) and /preload (HIDDEN is our /vendor), which have
 # no SELinux label in LineageOS-UL and break the system image.
