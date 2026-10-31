@@ -5,16 +5,30 @@
 #   so without it nothing would mark the device as provisioned.
 # - Disable the Mainline (APEX) apps a camera does not need. They cannot be
 #   overridden in the build like the plain system apps (see RemovePackages).
-# Runs on every boot; all steps are no-ops once done.
+# - Apply the camera-first quick settings tiles and the Rome time zone once.
+# Runs on every boot; all steps are no-ops once done. Output: logcat -s gd1-setup
+
+log -t gd1-setup "started"
+
+# sys.boot_completed can come before the settings and package services answer
+i=0
+until settings get global device_provisioned > /dev/null 2>&1 && pm path android > /dev/null 2>&1; do
+    i=$((i + 1))
+    if [ $i -gt 60 ]; then
+        log -t gd1-setup "framework not ready after 120 s, giving up"
+        exit 1
+    fi
+    sleep 2
+done
 
 settings put global device_provisioned 1
 settings put secure user_setup_complete 1
 
-# Apply the camera-first quick settings tiles once, also on devices that
-# already saved the stock set
-if [ "$(settings get secure gd1_qs_reset)" != 1 ]; then
+if [ "$(settings get secure gd1_firstboot_done)" != 1 ]; then
     settings delete secure sysui_qs_tiles
-    settings put secure gd1_qs_reset 1
+    setprop persist.sys.timezone Europe/Rome
+    settings put secure gd1_firstboot_done 1
+    log -t gd1-setup "quick settings tiles and time zone set"
 fi
 
 for p in \
@@ -29,5 +43,7 @@ for p in \
     com.android.cellbroadcastreceiver.module \
     com.android.rkpdapp
 do
-    pm disable-user --user 0 "$p" > /dev/null 2>&1
+    pm disable-user --user 0 "$p" > /dev/null 2>&1 || log -t gd1-setup "could not disable $p"
 done
+
+log -t gd1-setup "done"

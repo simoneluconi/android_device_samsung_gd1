@@ -28,6 +28,12 @@ PRODUCT_PROPERTY_OVERRIDES += \
 	ro.lcd_min_brightness=20 \
 	ro.ril.telephony.nstrings=4
 
+# Display: the panel is 720x1280 portrait, but the camera is used in
+# landscape. Rotate the primary display like stock does (SurfaceFlinger
+# orientation 1), so landscape is the natural orientation.
+PRODUCT_PROPERTY_OVERRIDES += \
+	ro.surface_flinger.primary_display_orientation=ORIENTATION_90
+
 # EGL blobs crash on screen off
 PRODUCT_PROPERTY_OVERRIDES += \
 	ro.egl.destroy_after_detach=true
