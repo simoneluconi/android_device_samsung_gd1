@@ -28,5 +28,12 @@
 
     <!-- Doze: should the pickup sensor be used as a pulse signal? -->
     <bool name="doze_pulse_on_pick_up">false</bool>
+
+    <!-- Camera-first quick settings: no torch (the GC100 has a xenon flash),
+         NFC, alarm, wallet, device controls, cast, screen recording, privacy
+         toggles or hotspot. The rest stays available in the tile editor. -->
+    <string name="quick_settings_tiles_default" translatable="false">
+        internet,bt,airplane,rotation,location,battery,dark,caffeine
+    </string>
 </resources>
 

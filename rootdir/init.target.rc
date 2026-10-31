@@ -83,7 +83,7 @@ on post-fs-data
     restorecon /data/.cid.info
     restorecon /data/ISP_CV
 
-# Camera-first profile: disable Mainline apps the camera does not need
+# Camera-first profile: skip the setup wizard, disable unneeded Mainline apps
 service gd1_disable_packages /vendor/bin/gd1-disable-packages.sh
     user root
     group root
