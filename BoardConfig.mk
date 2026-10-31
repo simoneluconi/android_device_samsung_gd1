@@ -47,9 +47,11 @@ DEVICE_FRAMEWORK_COMPATIBILITY_MATRIX_FILE += $(DEVICE_PATH)/framework_compatibi
 BOARD_KERNEL_CMDLINE += androidboot.selinux=permissive
 
 # Root folders: only /efs is mounted. The common tree also creates /misc
-# (a raw partition here) and /preload (HIDDEN is our /vendor), which have
-# no SELinux label in LineageOS-UL and break the system image.
+# (a raw partition here), /preload (HIDDEN is our /vendor) and a /tombstones
+# symlink (old Samsung blobs). None of them has a SELinux label in
+# LineageOS-UL, and they break the system image.
 BOARD_ROOT_EXTRA_FOLDERS := efs
+BOARD_ROOT_EXTRA_SYMLINKS :=
 
 TARGET_NO_RECOVERY := true
 TARGET_RECOVERY_FSTAB := $(DEVICE_PATH)/rootdir/fstab.smdk4x12

@@ -1,4 +1,5 @@
-<!-- Framework HALs that only this device needs -->
+<!-- Legacy HIDL HALs this device still uses, which no Android 14
+     framework matrix (FCM level 5 and up) lists any more -->
 <compatibility-matrix version="1.0" type="framework">
     <!-- The Samsung IPC RIL (libsec-ril via libril) still registers the
          deprecated OEM hook service next to IRadio -->
@@ -8,6 +9,42 @@
         <interface>
             <name>IOemHook</name>
             <instance>slot1</instance>
+        </interface>
+    </hal>
+    <!-- SurfaceFlinger configstore (smdk4412-common) -->
+    <hal format="hidl" optional="true">
+        <name>android.hardware.configstore</name>
+        <version>1.1</version>
+        <interface>
+            <name>ISurfaceFlingerConfigs</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+    <!-- Legacy health@2.0 service (legacy/health) -->
+    <hal format="hidl" optional="true">
+        <name>android.hardware.health</name>
+        <version>2.0</version>
+        <interface>
+            <name>IHealth</name>
+            <instance>backup</instance>
+        </interface>
+    </hal>
+    <!-- Exynos4 power HAL (hardware/samsung) -->
+    <hal format="hidl" optional="true">
+        <name>android.hardware.power</name>
+        <version>1.0</version>
+        <interface>
+            <name>IPower</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+    <!-- Legacy vibrator HAL -->
+    <hal format="hidl" optional="true">
+        <name>android.hardware.vibrator</name>
+        <version>1.0</version>
+        <interface>
+            <name>IVibrator</name>
+            <instance>default</instance>
         </interface>
     </hal>
 </compatibility-matrix>
