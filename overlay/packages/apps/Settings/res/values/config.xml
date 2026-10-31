@@ -19,5 +19,22 @@
 
         <!-- Whether or not the dock settings are to be displayed for this device when docked -->
     <bool name="has_dock_settings">true</bool>
-    
+
+    <!-- Camera-first Settings: hide what a camera without voice/SMS does not use -->
+    <bool name="config_show_emergency_settings">false</bool>
+    <bool name="config_show_emergency_gesture_settings">false</bool>
+    <bool name="config_show_emergency_info_in_device_info">false</bool>
+    <bool name="config_show_call_volume">false</bool>
+    <bool name="config_show_premium_sms">false</bool>
+    <bool name="config_show_wifi_hotspot_settings">false</bool>
+    <bool name="config_show_manual">false</bool>
+    <bool name="config_show_regulatory_info">false</bool>
+    <bool name="config_show_communal_settings">false</bool>
+    <bool name="config_show_enabled_vr_listeners">false</bool>
+    <bool name="config_show_camera_laser_sensor">false</bool>
+    <bool name="config_show_assist_and_voice_input">false</bool>
+    <bool name="config_show_smart_storage_toggle">false</bool>
+    <bool name="config_show_wallpaper_attribution">false</bool>
+    <bool name="config_show_system_update_settings">false</bool>
+    <bool name="config_show_avatar_in_homepage">false</bool>
 </resources>
