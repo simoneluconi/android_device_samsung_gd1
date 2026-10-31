@@ -213,10 +213,9 @@
             <name>IReadingEnhancement</name>
             <instance>default</instance>
         </interface>
-        <interface>
-            <name>IAdaptiveBacklight</name>
-            <instance>default</instance>
-        </interface>
+        <!-- No IAdaptiveBacklight: the s6d6aa1 panel has no CABC
+             (/sys/class/lcd/panel/power_reduce), so the service does not
+             register it and system_server would wait for it forever -->
         <interface>
             <name>ISunlightEnhancement</name>
             <instance>default</instance>

@@ -109,6 +109,9 @@ service gd1_console /system/bin/sh
 on property:sys.usb.state=adb && property:ro.debuggable=1
     start gd1_console
 
+on property:sys.usb.state=mtp,adb && property:ro.debuggable=1
+    start gd1_console
+
 on boot
 # cbd
 service cpboot-daemon /vendor/bin/cbd -d

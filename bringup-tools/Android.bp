@@ -1,0 +1,9 @@
+// Bring-up tools for the Galaxy Camera. Not installed by default; build them
+// with "m <name>" and copy the binary to the device by hand.
+
+cc_binary {
+    name: "gd1_egltest",
+    srcs: ["egltest.cpp"],
+    shared_libs: ["libEGL"],
+    installable: false,
+}
