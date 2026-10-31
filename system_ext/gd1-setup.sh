@@ -27,10 +27,15 @@ settings put global device_provisioned 1
 settings put secure user_setup_complete 1
 
 if [ "$(settings get secure gd1_firstboot_done)" != 1 ]; then
-    settings delete secure sysui_qs_tiles
+    # SystemUI keeps the tile list in memory and writes it straight back over
+    # any outside change, so set it while SystemUI is restarting
+    kill $(pidof com.android.systemui)
+    settings put secure sysui_qs_tiles internet,bt,airplane,rotation,location,battery,dark,caffeine
     setprop persist.sys.timezone Europe/Rome
+    # No "Discover Trust" onboarding notification
+    settings put --lineage system trust_interface_hinted 1
     settings put secure gd1_firstboot_done 1
-    log -t gd1-setup "quick settings tiles and time zone set"
+    log -t gd1-setup "quick settings tiles, time zone and Trust hint set"
 fi
 
 for p in \
