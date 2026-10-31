@@ -83,6 +83,17 @@ on post-fs-data
     restorecon /data/.cid.info
     restorecon /data/ISP_CV
 
+# Camera-first profile: disable Mainline apps the camera does not need
+service gd1_disable_packages /vendor/bin/gd1-disable-packages.sh
+    user root
+    group root
+    disabled
+    oneshot
+    seclabel u:r:su:s0
+
+on property:sys.boot_completed=1
+    start gd1_disable_packages
+
 # Bring-up diagnostics (userdebug only, see bringup-tools/gd1-bringup.sh)
 service gd1_bringup /vendor/bin/gd1-bringup.sh
     user root

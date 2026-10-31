@@ -52,6 +52,12 @@ PRODUCT_PACKAGES += \
 PRODUCT_PACKAGES += \
     camera.smdk4x12
 
+# Camera-first app set (see RemovePackages/Android.mk)
+PRODUCT_PACKAGES += \
+    RemovePackages
+PRODUCT_COPY_FILES += \
+    $(LOCAL_PATH)/rootdir/gd1-disable-packages.sh:$(TARGET_COPY_OUT_VENDOR)/bin/gd1-disable-packages.sh
+
 # Hardware features: a camera with 3G data, not a phone
 PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/handheld_core_hardware.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/handheld_core_hardware.xml \
