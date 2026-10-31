@@ -24,6 +24,9 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/rootdir/init.target.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/hw/init.target.rc \
     $(LOCAL_PATH)/rootdir/init.target.usb.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/hw/init.target.usb.rc
 
+# Input: rotate the touchscreen with the landscape display
+PRODUCT_COPY_FILES +=     $(LOCAL_PATH)/configs/idc/sec_touchscreen.idc:$(TARGET_COPY_OUT_VENDOR)/usr/idc/sec_touchscreen.idc
+
 # HIDL
 DEVICE_MANIFEST_FILE := $(LOCAL_PATH)/manifest.xml
 
@@ -56,7 +59,8 @@ PRODUCT_PACKAGES += \
 PRODUCT_PACKAGES += \
     RemovePackages
 PRODUCT_COPY_FILES += \
-    $(LOCAL_PATH)/rootdir/gd1-disable-packages.sh:$(TARGET_COPY_OUT_VENDOR)/bin/gd1-disable-packages.sh
+    $(LOCAL_PATH)/system_ext/gd1-setup.sh:$(TARGET_COPY_OUT_SYSTEM_EXT)/bin/gd1-setup.sh \
+    $(LOCAL_PATH)/system_ext/gd1-setup.rc:$(TARGET_COPY_OUT_SYSTEM_EXT)/etc/init/gd1-setup.rc
 
 # Defaults: English UI (the build default), Italian time zone
 PRODUCT_SYSTEM_PROPERTIES += \

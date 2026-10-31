@@ -1,4 +1,4 @@
-#!/vendor/bin/sh
+#!/system/bin/sh
 # Camera-first first-boot setup, run once the framework is up.
 # - Skip the setup wizard: mark the device as set up and turn the wizard off.
 #   The wizard itself stays installed because it replaces AOSP Provision,
@@ -7,6 +7,8 @@
 #   overridden in the build like the plain system apps (see RemovePackages).
 # - Apply the camera-first quick settings tiles and the Rome time zone once.
 # Runs on every boot; all steps are no-ops once done. Output: logcat -s gd1-setup
+# Never disable com.android.sdksandbox: PackageManagerService requires it
+# and system_server crashes at boot without it.
 
 log -t gd1-setup "started"
 
@@ -34,12 +36,10 @@ fi
 for p in \
     org.lineageos.setupwizard \
     com.android.adservices.api \
-    com.android.sdksandbox \
     com.android.ondevicepersonalization.services \
     com.android.federatedcompute.services \
     com.android.healthconnect.controller \
     com.android.health.connect.backuprestore \
-    com.android.devicelockcontroller \
     com.android.cellbroadcastreceiver.module \
     com.android.rkpdapp
 do
