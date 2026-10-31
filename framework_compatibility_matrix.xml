@@ -1,0 +1,13 @@
+<!-- Framework HALs that only this device needs -->
+<compatibility-matrix version="1.0" type="framework">
+    <!-- The Samsung IPC RIL (libsec-ril via libril) still registers the
+         deprecated OEM hook service next to IRadio -->
+    <hal format="hidl" optional="true">
+        <name>android.hardware.radio.deprecated</name>
+        <version>1.0</version>
+        <interface>
+            <name>IOemHook</name>
+            <instance>slot1</instance>
+        </interface>
+    </hal>
+</compatibility-matrix>

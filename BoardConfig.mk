@@ -39,6 +39,9 @@ BOARD_USERDATAIMAGE_PARTITION_SIZE := 4441767936
 
 # Recovery: the 8MB RECOVERY partition cannot hold the LineageOS recovery,
 # flashing is done with Odin (see docs/RECOVERY.md)
+# VINTF
+DEVICE_FRAMEWORK_COMPATIBILITY_MATRIX_FILE += $(DEVICE_PATH)/framework_compatibility_matrix.xml
+
 # SELinux permissive for bring-up (honoured on userdebug only): there is no
 # device policy for the vendor services yet. See docs/TODO.md.
 BOARD_KERNEL_CMDLINE += androidboot.selinux=permissive
