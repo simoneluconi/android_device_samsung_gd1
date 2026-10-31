@@ -94,6 +94,21 @@ service gd1_bringup /vendor/bin/gd1-bringup.sh
 on post-fs-data && property:ro.debuggable=1
     start gd1_bringup
 
+# Bring-up serial console (userdebug only): a root shell on a USB ACM port
+# (/dev/ttyGS0 here, a COM port on the PC), independent of adbd.
+on early-init && property:ro.debuggable=1
+    setprop vendor.gd1.usb.extra ,acm
+
+service gd1_console /system/bin/sh
+    console ttyGS0
+    user root
+    group root shell log
+    disabled
+    seclabel u:r:su:s0
+
+on property:sys.usb.state=adb && property:ro.debuggable=1
+    start gd1_console
+
 on boot
 # cbd
 service cpboot-daemon /vendor/bin/cbd -d
