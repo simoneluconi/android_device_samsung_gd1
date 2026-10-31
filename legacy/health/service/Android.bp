@@ -1,0 +1,35 @@
+// The generic health@2.0 service, formerly in AOSP system/core/healthd (removed in LineageOS-UL 21).
+
+package {
+    default_applicable_licenses: ["//device/samsung/gd1:device_samsung_gd1_license"],
+}
+
+cc_binary {
+    name: "android.hardware.health@2.0-service",
+    vendor: true,
+    relative_install_path: "hw",
+    init_rc: ["android.hardware.health@2.0-service.rc"],
+    srcs: ["HealthServiceDefault.cpp"],
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
+
+    static_libs: [
+        "android.hardware.health@2.0-impl",
+        "android.hardware.health@1.0-convert",
+        "libhealthservice",
+        "libhealthstoragedefault",
+        "libbatterymonitor",
+    ],
+
+    shared_libs: [
+        "libbase",
+        "libcutils",
+        "libhidlbase",
+        "liblog",
+        "libutils",
+        "android.hardware.health@2.0",
+    ],
+}
