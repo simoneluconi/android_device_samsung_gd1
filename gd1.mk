@@ -60,3 +60,14 @@ $(call inherit-product-if-exists, vendor/samsung/gd1/gd1-vendor.mk)
 
 # Vendor properties
 -include $(LOCAL_PATH)/vendor_prop.mk
+
+# Bring-up aids, userdebug/eng only. Trust a local adb key from the first
+# boot (bringup/adb_keys, never committed), and keep logcat on /data so that
+# a bootloop can be read back from the mini recovery.
+ifneq ($(TARGET_BUILD_VARIANT),user)
+ifneq ($(wildcard $(LOCAL_PATH)/bringup/adb_keys),)
+PRODUCT_ADB_KEYS := $(LOCAL_PATH)/bringup/adb_keys
+endif
+PRODUCT_SYSTEM_PROPERTIES += \
+    persist.logd.logpersistd=logcatd
+endif
