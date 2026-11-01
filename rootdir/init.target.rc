@@ -74,9 +74,6 @@ on post-fs-data
 #    chmod 0644 /dev/icdr
 #    chown system system /dev/tzic
 
-# make param block device link for SysScope
-    symlink /dev/block/mmcblk0p4 /dev/block/param
-
 # Restorecon
     restorecon_recursive /efs
 
