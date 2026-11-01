@@ -438,9 +438,14 @@
     <!-- A camera turns on straight into use: no lock screen by default -->
     <bool name="config_disableLockscreenByDefault">true</bool>
 
-    <!-- Do not wake the screen on USB plug changes. The MAX77693 charger
-         re-reports the cable each time it cycles between charging and full,
-         so with smdk4412-common's "true" the screen kept turning itself on
-         while the camera sat on USB. -->
-    <bool name="config_unplugTurnsOnScreen">false</bool>
+    <!-- No ambient display: the panel is an LCD, so dozing saves nothing.
+         smdk4412-common turns doze on for the i9300's AMOLED. Here it made
+         the screen come back on by itself: on timeout the device dozed,
+         the disabled keyguard hid at once, and SystemUI then woke the
+         screen ("BOUNCER_DOZING"). Without a doze component the device
+         goes straight to sleep, and Settings hides the ambient display
+         entries. -->
+    <string name="config_dozeComponent" translatable="false"></string>
+    <bool name="config_dozeAfterScreenOffByDefault">false</bool>
+    <bool name="config_dozeAlwaysOnDisplayAvailable">false</bool>
 </resources>
