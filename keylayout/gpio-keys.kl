@@ -1,0 +1,24 @@
+# Galaxy Camera (GC100) gpio-keys, codes from the gc1 board file
+# (arch/arm/mach-exynos/mach-midas.c, midas_buttons) and the stock layout.
+#
+# The zoom lever has two stages per direction: slow (0x215/0x216) and fast
+# (0x221/0x222). Both map to ZOOM_IN/ZOOM_OUT as on stock; an app tells
+# them apart with KeyEvent.getScanCode().
+#
+# No WAKE flags on the camera keys: waking on the shutter is LineageOS's
+# camera button setting (config_deviceHardwareWakeKeys), and the zoom lever
+# should not wake the camera in a bag.
+
+key 116   POWER             WAKE
+
+# Shutter: half press (S1) focuses, full press (S2) shoots
+key 528   FOCUS
+key 544   CAMERA
+
+# Zoom lever, slow stage
+key 533   ZOOM_IN
+key 534   ZOOM_OUT
+
+# Zoom lever, fast stage
+key 545   ZOOM_IN
+key 546   ZOOM_OUT

@@ -65,12 +65,23 @@
          sdk/src/java/org/lineageos/internal/util/DeviceKeysConstants.java.
     -->
 
+    <!-- Hardware keys (bit field, see smdk4412-common). The GC100 has no
+         Home/Back/Menu or volume keys: only Power, the two-stage shutter and
+         the zoom lever. Camera (32) enables LineageOS's camera button
+         settings (wake on press, peek on half-press, launch camera). -->
+    <integer name="config_deviceHardwareKeys">32</integer>
+    <integer name="config_deviceHardwareWakeKeys">32</integer>
+
+    <!-- LCD panel: no burn-in protection pixel shifting -->
+    <bool name="config_enableBurnInProtection">false</bool>
+
     <!-- Button backlight control. Possible values are:
             0 - Not supported
             1 - Supported, but only on/off mode
             2 - Supported with variable brightness control
+         The GC100 has no backlit buttons.
     -->
-    <integer name="config_deviceSupportsButtonBrightnessControl">1</integer>
+    <integer name="config_deviceSupportsButtonBrightnessControl">0</integer>
 
     <!-- All the capabilities of the LEDs on this device, stored as a bit field.
          This integer should equal the sum of the corresponding value for each
@@ -86,6 +97,8 @@
 
          For example, a device with notification and battery lights
          that support pulsating and RGB control would set this config
-         to 75. -->
-    <integer name="config_deviceLightCapabilities">75</integer>
+         to 75.
+         The GC100 has no notification LED (the i9300's AN30259A is absent,
+         and its driver is disabled in the gd1 defconfig). -->
+    <integer name="config_deviceLightCapabilities">0</integer>
 </resources>
