@@ -860,6 +860,31 @@ int exynos_camera_params_init(struct exynos_camera *exynos_camera, int id)
 		exynos_param_string_set(exynos_camera, "zoom-supported", "false");
 	}
 
+#ifdef EXYNOS_M9MO
+	/*
+	 * How to read the CAMERA_MSG_RAW_IMAGE frame (persist.vendor.camera.raw=1),
+	 * measured on the device on 2026-11-01, so that apps and tools read it
+	 * from here instead of hard-coding it:
+	 * - raw-size: the row stride in pixels and the row count; a 4160-byte
+	 *   tail follows the rows;
+	 * - raw-format: raw10be, a continuous big-endian 10-bit stream;
+	 * - raw-active-area: left,top,right,bottom; columns 0-1 and the last 64
+	 *   are zero;
+	 * - raw-black-level: from a dark frame, 63.2-63.6 on all four channels.
+	 *   The black and white levels can be overridden with
+	 *   persist.vendor.camera.raw.black and .white until they are
+	 *   characterised per ISO.
+	 */
+	exynos_param_string_set(exynos_camera, "raw-size", "4736x3452");
+	exynos_param_string_set(exynos_camera, "raw-format", "raw10be");
+	exynos_param_string_set(exynos_camera, "raw-cfa", "grbg");
+	exynos_param_string_set(exynos_camera, "raw-active-area", "2,0,4672,3452");
+	exynos_param_int_set(exynos_camera, "raw-black-level",
+		property_get_int32("persist.vendor.camera.raw.black", 64));
+	exynos_param_int_set(exynos_camera, "raw-white-level",
+		property_get_int32("persist.vendor.camera.raw.white", 1023));
+#endif
+
 	// AE lock
 
 	if (exynos_camera->config->presets[id].params.auto_exposure_lock_supported == 1) {
