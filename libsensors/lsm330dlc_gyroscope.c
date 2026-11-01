@@ -194,17 +194,8 @@ int lsm330dlc_gyroscope_get_data(struct smdk4x12_sensors_handlers *handlers,
 	if (handlers == NULL || handlers->data == NULL || event == NULL)
 		return -EINVAL;
 
-	if (mFlushed & (1 << sensorId)) { /* Send flush META_DATA_FLUSH_COMPLETE immediately */
-		sensors_event_t sensor_event;
-		memset(&sensor_event, 0, sizeof(sensor_event));
-		sensor_event.version = META_DATA_VERSION;
-		sensor_event.type = SENSOR_TYPE_META_DATA;
-		sensor_event.meta_data.sensor = sensorId;
-		sensor_event.meta_data.what = 0;
-		*event++ = sensor_event;
-		mFlushed &= ~(0x01 << sensorId);
-		ALOGD("AkmSensor: %s Flushed sensorId: %d", __func__, sensorId);
-	}
+	// Flush completions are sent by smdk4x12_sensors_poll()
+	(void) sensorId;
 
 	data = (struct lsm330dlc_gyroscope_data *) handlers->data;
 
@@ -219,8 +210,15 @@ int lsm330dlc_gyroscope_get_data(struct smdk4x12_sensors_handlers *handlers,
 
 	event->gyro.status = SENSOR_STATUS_ACCURACY_MEDIUM;
 
-	// The kernel only reports the axes that changed, so keep the last
-	// values in data->gyro (portrait frame) and rotate a copy
+	/*
+	 * The kernel reports all three axes on every sample, but the input core
+	 * drops an EV_REL event whose value is 0: an axis missing from this
+	 * sample reads 0, not its previous value. data->gyro holds the sample in
+	 * the portrait frame; a copy is rotated.
+	 */
+	data->gyro.x = 0;
+	data->gyro.y = 0;
+	data->gyro.z = 0;
 	do {
 		rc = read(input_fd, &input_event, sizeof(input_event));
 		if (rc < (int) sizeof(input_event))

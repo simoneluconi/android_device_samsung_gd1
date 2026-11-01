@@ -184,12 +184,11 @@ void *akm8963_thread(void *thread_data)
 	struct smdk4x12_sensors_handlers *handlers = NULL;
 	struct akm8963_data *data = NULL;
 	struct input_event event;
-	struct timeval time;
+	struct timespec now;
 	char i2c_data[SENSOR_DATA_SIZE] = { 0 };
 	short magnetic_data[3];
 	short mode;
-	int64_t before, after;
-	int diff;
+	int64_t before, after, delay, diff;
 	int device_fd;
 	int uinput_fd;
 	int rc;
@@ -217,31 +216,36 @@ void *akm8963_thread(void *thread_data)
 			break;
 
 		while (handlers->activated) {
-			gettimeofday(&time, NULL);
-			before = timestamp(&time);
+			// Monotonic: a wall clock step (NTP, adb) must not stretch the
+			// sleep below
+			clock_gettime(CLOCK_MONOTONIC, &now);
+			before = (int64_t) now.tv_sec * 1000000000LL + now.tv_nsec;
 
 			mode = AK8963_CNTL1_SNG_MEASURE;
 			rc = ioctl(device_fd, ECS_IOCTL_SET_MODE, &mode);
 			if (rc < 0) {
 				ALOGE("%s: Unable to set akm8963 mode", __func__);
-				return NULL;
+				goto sleep;
 			}
 
 			memset(&i2c_data, 0, sizeof(i2c_data));
 			rc = ioctl(device_fd, ECS_IOCTL_GETDATA, &i2c_data);
 			if (rc < 0) {
 				ALOGE("%s: Unable to get akm8963 data", __func__);
-				return NULL;
+				goto sleep;
 			}
 
+			// Skipped samples still wait for the next period, or the loop
+			// would spin at the conversion rate (e.g. on overflow near the
+			// zoom motor's magnets)
 			if (!(i2c_data[0] & AK8963_ST1_DRDY)) {
-				ALOGE("%s: akm8963 data is not ready", __func__);
-				continue;
+				ALOGV("%s: akm8963 data is not ready", __func__);
+				goto sleep;
 			}
 
 			if (i2c_data[7] & AK8963_ST2_HOFL) {
-				ALOGE("%s: akm8963 magnetic sensor overflow", __func__);
-				continue;
+				ALOGV("%s: akm8963 magnetic sensor overflow", __func__);
+				goto sleep;
 			}
 
 			// 16-bit (0.15 uT/LSB) to the AK8975 scale (0.3 uT/LSB)
@@ -251,8 +255,8 @@ void *akm8963_thread(void *thread_data)
 
 			rc = akfs_get_magnetic_field(data, (short *) &magnetic_data);
 			if (rc < 0) {
-				ALOGE("%s: Unable to get AKFS magnetic field", __func__);
-				continue;
+				ALOGV("%s: Unable to get AKFS magnetic field", __func__);
+				goto sleep;
 			}
 
 			input_event_set(&event, EV_REL, REL_X, (int) (data->magnetic.x * 1000));
@@ -266,14 +270,15 @@ void *akm8963_thread(void *thread_data)
 			input_event_set(&event, EV_SYN, 0, 0);
 			write(uinput_fd, &event, sizeof(event));
 
-			gettimeofday(&time, NULL);
-			after = timestamp(&time);
+sleep:
+			clock_gettime(CLOCK_MONOTONIC, &now);
+			after = (int64_t) now.tv_sec * 1000000000LL + now.tv_nsec;
 
-			diff = (int) (data->delay - (after - before)) / 1000;
-			if (diff <= 0)
-				continue;
-
-			usleep(diff);
+			// The period is 0 until batch() sets it: use 20 ms (50 Hz)
+			delay = data->delay > 0 ? data->delay : 20000000LL;
+			diff = (delay - (after - before)) / 1000;
+			if (diff > 0)
+				usleep(diff > 1000000 ? 1000000 : diff);
 		}
 	}
 	return NULL;
@@ -581,17 +586,8 @@ int akm8963_get_data(struct smdk4x12_sensors_handlers *handlers,
 	if (handlers == NULL || handlers->data == NULL || event == NULL)
 		return -EINVAL;
 
-	if (mFlushed & (1 << sensorId)) { /* Send flush META_DATA_FLUSH_COMPLETE immediately */
-		sensors_event_t sensor_event;
-		memset(&sensor_event, 0, sizeof(sensor_event));
-		sensor_event.version = META_DATA_VERSION;
-		sensor_event.type = SENSOR_TYPE_META_DATA;
-		sensor_event.meta_data.sensor = sensorId;
-		sensor_event.meta_data.what = 0;
-		*event++ = sensor_event;
-		mFlushed &= ~(0x01 << sensorId);
-		ALOGD("AkmSensor: %s Flushed sensorId: %d", __func__, sensorId);
-	}
+	// Flush completions are sent by smdk4x12_sensors_poll()
+	(void) sensorId;
 
 	data = (struct akm8963_data *) handlers->data;
 

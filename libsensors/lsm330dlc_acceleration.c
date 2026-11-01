@@ -243,17 +243,8 @@ int lsm330dlc_acceleration_get_data(struct smdk4x12_sensors_handlers *handlers,
 	if (handlers == NULL || handlers->data == NULL || event == NULL)
 		return -EINVAL;
 
-	if (mFlushed & (1 << sensorId)) { /* Send flush META_DATA_FLUSH_COMPLETE immediately */
-		sensors_event_t sensor_event;
-		memset(&sensor_event, 0, sizeof(sensor_event));
-		sensor_event.version = META_DATA_VERSION;
-		sensor_event.type = SENSOR_TYPE_META_DATA;
-		sensor_event.meta_data.sensor = sensorId;
-		sensor_event.meta_data.what = 0;
-		*event++ = sensor_event;
-		mFlushed &= ~(0x01 << sensorId);
-		ALOGD("AkmSensor: %s Flushed sensorId: %d", __func__, sensorId);
-	}
+	// Flush completions are sent by smdk4x12_sensors_poll()
+	(void) sensorId;
 
 	data = (struct lsm330dlc_acceleration_data *) handlers->data;
 

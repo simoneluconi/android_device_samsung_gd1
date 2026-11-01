@@ -140,9 +140,28 @@ static int smdk4x12_sensors_batch(struct sensors_poll_device_1 *dev, int handle,
 	return 0;
 }
 
+/*
+ * A flush is answered with META_DATA_FLUSH_COMPLETE from the poll loop, just
+ * before the sensor's next sample. mFlushed holds one pending bit per handle;
+ * it is changed from binder threads and from the poll thread, so atomically.
+ */
 static int smdk4x12_sensors_flush(struct sensors_poll_device_1 *dev, int handle) {
-	(void)dev;
-	mFlushed |= (1 << handle);
+	struct smdk4x12_sensors_device *device = (struct smdk4x12_sensors_device *) dev;
+	int i;
+
+	if (device == NULL || handle < 0 || handle >= 32)
+		return -EINVAL;
+
+	// A sensor that is not running sends no sample, so the completion would
+	// never come: the HAL contract says -EINVAL then
+	for (i = 0; i < device->handlers_count; i++) {
+		if (device->handlers[i] != NULL && device->handlers[i]->handle == handle)
+			break;
+	}
+	if (i == device->handlers_count || !device->handlers[i]->activated)
+		return -EINVAL;
+
+	__atomic_fetch_or(&mFlushed, 1 << handle, __ATOMIC_SEQ_CST);
 	ALOGD("%s: handle: %d", __func__, handle);
 	return 0;
 }
@@ -168,6 +187,11 @@ int smdk4x12_sensors_poll(struct sensors_poll_device_t *dev,
 
 	n = 0;
 
+	/*
+	 * data[] has room for exactly count events: check before every event
+	 * written. A sensor whose data does not fit stays readable and is
+	 * picked up by the next poll() call.
+	 */
 	do {
 		poll_rc = poll(device->poll_fds, device->poll_fds_count, n > 0 ? 0 : -1);
 		if (poll_rc < 0) {
@@ -175,15 +199,32 @@ int smdk4x12_sensors_poll(struct sensors_poll_device_t *dev,
 			return 0;
 		}
 
-		for (i = 0; i < device->poll_fds_count; i++) {
+		for (i = 0; i < device->poll_fds_count && count > 0; i++) {
 			if (!(device->poll_fds[i].revents & POLLIN))
 				continue;
 
-			for (j = 0; j < device->handlers_count; j++) {
-				if (device->handlers[j] == NULL || device->handlers[j]->poll_fd != device->poll_fds[i].fd || device->handlers[j]->get_data == NULL)
+			for (j = 0; j < device->handlers_count && count > 0; j++) {
+				struct smdk4x12_sensors_handlers *handler = device->handlers[j];
+				int bit;
+
+				if (handler == NULL || handler->poll_fd != device->poll_fds[i].fd || handler->get_data == NULL)
 					continue;
 
-				rc = device->handlers[j]->get_data(device->handlers[j], &data[n]);
+				// A pending flush completes just before the next sample
+				bit = 1 << handler->handle;
+				if (__atomic_fetch_and(&mFlushed, ~bit, __ATOMIC_SEQ_CST) & bit) {
+					memset(&data[n], 0, sizeof(data[n]));
+					data[n].version = META_DATA_VERSION;
+					data[n].type = SENSOR_TYPE_META_DATA;
+					data[n].meta_data.sensor = handler->handle;
+					data[n].meta_data.what = META_DATA_FLUSH_COMPLETE;
+					n++;
+					count--;
+					if (count <= 0)
+						break;
+				}
+
+				rc = handler->get_data(handler, &data[n]);
 				if (rc < 0) {
 					device->poll_fds[i].revents = 0;
 					poll_rc = -1;
