@@ -7,3 +7,9 @@ cc_binary {
     shared_libs: ["libEGL"],
     installable: false,
 }
+
+cc_binary {
+    name: "gd1_ffstest",
+    srcs: ["ffstest.cpp"],
+    installable: false,
+}
