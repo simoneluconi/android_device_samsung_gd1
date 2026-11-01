@@ -3297,28 +3297,99 @@ static int exynos_camera_m9mo_get_frame(struct exynos_camera *exynos_camera,
 	return 0;
 }
 
-static void exynos_camera_m9mo_save_raw(void *data, int size, int width, int height)
+static void exynos_camera_m9mo_save_raw(void *data, int size, char *path, size_t path_size)
 {
-	char path[128];
 	time_t now = time(NULL);
 	struct tm tm;
 	FILE *file;
 
 	localtime_r(&now, &tm);
-	snprintf(path, sizeof(path), M9MO_RAW_DIR "/IMG_%04d%02d%02d_%02d%02d%02d.raw",
+	snprintf(path, path_size, M9MO_RAW_DIR "/IMG_%04d%02d%02d_%02d%02d%02d.raw",
 		tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
 
 	file = fopen(path, "wb");
 	if (file == NULL) {
 		ALOGE("%s: Unable to open %s", __func__, path);
+		path[0] = '\0';
 		return;
 	}
 	fwrite(data, 1, size, file);
 	fclose(file);
 
-	// Bytes per pixel at the nominal size: 1.25 = RAW10 packed, 1.5 = RAW12
-	ALOGD("%s: %s, %d bytes, %.3f bytes per pixel at %dx%d", __func__, path,
-		size, (double) size / (width * height), width, height);
+	ALOGD("%s: %s, %d bytes", __func__, path, size);
+}
+
+/*
+ * The exposure the ISP used for the last shot. m9mo_get_exif() reads it
+ * from the ISP after the JPEG transfer (also after the RAW mode's JPEG
+ * frame); it only exposes APEX values x100, rounded to the standard steps:
+ * TV for the exposure time (2^-TV s), AV for the aperture (f = 2^(AV/2)),
+ * BV for the brightness and EBV for the exposure bias. FL and FL_35mm are
+ * raw ISP values whose unit is still to be confirmed.
+ *
+ * They go to the exif-* parameters for the app (the ISP JPEG has no
+ * exposure EXIF) and, for a RAW shot, to <raw>.txt next to the frame, with
+ * the raw-* layout, for the DNG converter (tools/m9mo-dng.py).
+ */
+static void exynos_camera_m9mo_exif(struct exynos_camera *exynos_camera, const char *raw_path)
+{
+	static const struct {
+		int cid;
+		const char *key;
+	} ctrls[] = {
+		{ V4L2_CID_CAMERA_EXIF_ISO, "exif-iso" },
+		{ V4L2_CID_CAMERA_EXIF_TV, "exif-tv" },
+		{ V4L2_CID_CAMERA_EXIF_AV, "exif-av" },
+		{ V4L2_CID_CAMERA_EXIF_BV, "exif-bv" },
+		{ V4L2_CID_CAMERA_EXIF_EBV, "exif-ebv" },
+		{ V4L2_CID_CAMERA_EXIF_FLASH, "exif-flash" },
+		{ V4L2_CID_CAMERA_EXIF_FL, "exif-fl" },
+		{ V4L2_CID_CAMERA_EXIF_FL_35mm, "exif-fl-35mm" },
+	};
+	static const char *layout[] = {
+		"raw-size", "raw-format", "raw-cfa", "raw-active-area",
+	};
+	int values[sizeof(ctrls) / sizeof(ctrls[0])];
+	char path[160];
+	FILE *file = NULL;
+	unsigned int i;
+	int rc;
+
+	for (i = 0; i < sizeof(ctrls) / sizeof(ctrls[0]); i++) {
+		values[i] = 0;
+		rc = exynos_v4l2_g_ctrl(exynos_camera, 0, ctrls[i].cid, &values[i]);
+		if (rc < 0)
+			ALOGE("%s: Unable to read %s", __func__, ctrls[i].key);
+		exynos_param_int_set(exynos_camera, (char *) ctrls[i].key, values[i]);
+	}
+
+	ALOGD("%s: ISO %d, TV %d, AV %d, BV %d, EBV %d, flash %d, FL %d, FL35 %d", __func__,
+		values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7]);
+
+	if (raw_path == NULL || raw_path[0] == '\0')
+		return;
+
+	snprintf(path, sizeof(path), "%s.txt", raw_path);
+	file = fopen(path, "w");
+	if (file == NULL) {
+		ALOGE("%s: Unable to open %s", __func__, path);
+		return;
+	}
+
+#define PARAM_STRING(key) ({ char *_s = exynos_param_string_get(exynos_camera, (char *) (key)); _s ? _s : ""; })
+	for (i = 0; i < sizeof(layout) / sizeof(layout[0]); i++)
+		fprintf(file, "%s=%s\n", layout[i], PARAM_STRING(layout[i]));
+	fprintf(file, "raw-black-level=%d\n", exynos_param_int_get(exynos_camera, "raw-black-level"));
+	fprintf(file, "raw-white-level=%d\n", exynos_param_int_get(exynos_camera, "raw-white-level"));
+	for (i = 0; i < sizeof(ctrls) / sizeof(ctrls[0]); i++)
+		fprintf(file, "%s=%d\n", ctrls[i].key, values[i]);
+	fprintf(file, "zoom=%d\n", exynos_param_int_get(exynos_camera, "zoom"));
+	fprintf(file, "exposure-compensation=%d\n", exynos_param_int_get(exynos_camera, "exposure-compensation"));
+	fprintf(file, "flash-mode=%s\n", PARAM_STRING("flash-mode"));
+	fprintf(file, "flash-popup=%s\n", PARAM_STRING("flash-popup"));
+#undef PARAM_STRING
+
+	fclose(file);
 }
 
 void *exynos_camera_m9mo_picture(void *data)
@@ -3330,6 +3401,7 @@ void *exynos_camera_m9mo_picture(void *data)
 	int width = exynos_camera->picture_width;
 	int height = exynos_camera->picture_height;
 	int raw = property_get_bool("persist.vendor.camera.raw", 0);
+	char raw_path[128] = "";
 	int streaming = 0;
 	int length, size = 0;
 	int fd, rc, i;
@@ -3442,7 +3514,7 @@ void *exynos_camera_m9mo_picture(void *data)
 				size = length;
 			}
 
-			exynos_camera_m9mo_save_raw(buffer->data, size, width, height);
+			exynos_camera_m9mo_save_raw(buffer->data, size, raw_path, sizeof(raw_path));
 
 			if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_RAW_IMAGE) && EXYNOS_CAMERA_CALLBACK_DEFINED(data)) {
 				raw_memory = exynos_camera->callbacks.request_memory(-1, size, 1, exynos_camera->callbacks.user);
@@ -3482,6 +3554,8 @@ void *exynos_camera_m9mo_picture(void *data)
 	}
 
 	ALOGD("%s: JPEG of %d bytes", __func__, size);
+
+	exynos_camera_m9mo_exif(exynos_camera, raw_path);
 
 	jpeg = exynos_camera->callbacks.request_memory(-1, size, 1, exynos_camera->callbacks.user);
 	if (jpeg == NULL || jpeg->data == NULL || jpeg->data == MAP_FAILED) {
