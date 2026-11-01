@@ -1,7 +1,10 @@
 # GC100 device blobs for vendor/samsung/gd1.
-# Source dir layout (tools: see CLAUDE.md "vendor blobs"):
-#   vendor/  = html6405's LineageOS 21 i9300 vendor (stock I9300XXUGMJ9)
+# Source dir layout, made by tools/mk-blobsrc.sh:
+#   vendor/  = only the vendor/ entries below, from html6405's LineageOS 21
+#              i9300 vendor (stock I9300XXUGMJ9)
 #   system/  = EK-GC100 stock GC100XXBMC4 /system dump
+# extract-utils looks for a blob at its destination path first, so a full
+# i9300 vendor/ would silently shadow every system/...:vendor/... entry.
 
 # RIL - XMM6262, same modem family as the i9300 (from the i9300 LOS21 vendor, used with libsecril-shim)
 vendor/bin/cbd
@@ -21,3 +24,10 @@ system/etc/wifi/nvram_net.txt_murata:vendor/etc/wifi/nvram_net.txt_murata
 system/bin/bcm4334.hcd:vendor/firmware/bcm4334.hcd
 system/bin/bcm4334_murata.hcd:vendor/firmware/bcm4334_murata.hcd
 system/bin/bcm4334_semco.hcd:vendor/firmware/bcm4334_semco.hcd
+
+# GPS - BCM4752 (sysfs hwrev b), the GC100's own daemon and HAL. The daemon
+# is installed as gpsd for the common TARGET_PROCESS_SDK_VERSION_OVERRIDE,
+# the HAL as gps.exynos4.vendor.so for the libgps-shim wrapper.
+system/bin/gpsd_4752:vendor/bin/gpsd
+system/bin/gps.cer:vendor/etc/gps.cer
+system/lib/hw/gps.exynos4.so:vendor/lib/hw/gps.exynos4.vendor.so
