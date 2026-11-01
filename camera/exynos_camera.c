@@ -4556,9 +4556,9 @@ int exynos_camera_set_parameters(struct camera_device *dev,
 /*
  * The pop-up flash state, read from the ISP: G_CTRL FLASH_MODE returns
  * CAPPARM STROBE_CHARGE in bits 0-7 and STROBE_UP_DOWN in bits 8-15.
- * The app decides what to do with a closed flash; the HAL only reports it.
- * Exposed as the vendor parameters m9mo-strobe-up-down and
- * m9mo-strobe-charge until their values are decoded on the device.
+ * The app decides what to do with a closed flash; the HAL only reports it,
+ * as flash-popup=up|down (up/down 1 = up, checked on the device). The
+ * charge byte stays raw in m9mo-strobe-charge until it is decoded.
  */
 static void exynos_camera_m9mo_flash_status(struct exynos_camera *exynos_camera)
 {
@@ -4579,8 +4579,8 @@ static void exynos_camera_m9mo_flash_status(struct exynos_camera *exynos_camera)
 		last = value;
 	}
 
+	exynos_param_string_set(exynos_camera, "flash-popup", ((value >> 8) & 0xff) ? "up" : "down");
 	exynos_param_int_set(exynos_camera, "m9mo-strobe-charge", value & 0xff);
-	exynos_param_int_set(exynos_camera, "m9mo-strobe-up-down", (value >> 8) & 0xff);
 }
 #endif
 
