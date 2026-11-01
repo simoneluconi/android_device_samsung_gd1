@@ -686,6 +686,16 @@ int exynos_v4l2_s_ctrl(struct exynos_camera *exynos_camera, int exynos_v4l2_id,
 	if (exynos_camera == NULL)
 		return -EINVAL;
 
+#ifdef EXYNOS_M9MO
+	/*
+	 * The M9MO is only powered from the preview on (see exynos_camera_start).
+	 * Before that, controls are kept in the HAL's parameters and sent when
+	 * exynos_camera_sensor_start() applies them all.
+	 */
+	if (exynos_v4l2_id == 0 && exynos_v4l2_fd(exynos_camera, 0) < 0)
+		return value;
+#endif
+
 	control.id = id;
 	control.value = value;
 

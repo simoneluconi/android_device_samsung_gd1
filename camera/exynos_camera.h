@@ -382,6 +382,7 @@ struct exynos_camera {
     pthread_mutex_t auto_focus_mutex;
 	// Camera params
 
+	int camera_id;
 	int camera_rotation;
 	int camera_hflip;
 	int camera_vflip;

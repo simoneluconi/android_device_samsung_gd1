@@ -640,6 +640,20 @@ int exynos_camera_start(struct exynos_camera *exynos_camera, int id)
 		goto error;
 	}
 
+	exynos_camera->camera_id = id;
+
+#ifdef EXYNOS_M9MO
+	/*
+	 * Do not power the ISP here. Opening FIMC0 and selecting the input boots
+	 * the M9MO and extends the lens, and the framework opens the camera just
+	 * to read its parameters (twice at every boot: the camera provider and
+	 * CameraService's API1 parameter cache). The ISP starts with the preview
+	 * instead, in exynos_camera_sensor_start(); until then the parameters
+	 * live in the HAL only (see exynos_v4l2_s_ctrl()).
+	 */
+	goto params;
+#endif
+
 	// FIMC0
 
 	rc = exynos_v4l2_open(exynos_camera, 0);
@@ -666,6 +680,9 @@ int exynos_camera_start(struct exynos_camera *exynos_camera, int id)
 		goto error;
 	}
 
+#ifdef EXYNOS_M9MO
+params:
+#endif
 	// Recording
 
 	exynos_camera->recording_metadata = 1;
@@ -2746,6 +2763,59 @@ complete:
 	return rc;
 }
 
+#ifdef EXYNOS_M9MO
+/*
+ * Power the M9MO: opening FIMC0 and selecting its input boots the ISP and
+ * extends the lens. Then send every parameter the framework set meanwhile.
+ * The ISP stays on until the camera is closed (exynos_camera_stop), which
+ * retracts the lens.
+ */
+int exynos_camera_sensor_start(struct exynos_camera *exynos_camera)
+{
+	int id = exynos_camera->camera_id;
+	int rc;
+
+	if (exynos_v4l2_fd(exynos_camera, 0) >= 0)
+		return 0;
+
+	ALOGD("%s(): powering the M9MO", __func__);
+
+	rc = exynos_v4l2_open(exynos_camera, 0);
+	if (rc < 0) {
+		ALOGE("%s: Unable to open v4l2 device", __func__);
+		goto error;
+	}
+
+	rc = exynos_v4l2_querycap_cap(exynos_camera, 0);
+	if (rc < 0) {
+		ALOGE("%s: Unable to query capabilities", __func__);
+		goto error;
+	}
+
+	rc = exynos_v4l2_enum_input(exynos_camera, 0, id);
+	if (rc < 0) {
+		ALOGE("%s: Unable to enumerate input", __func__);
+		goto error;
+	}
+
+	rc = exynos_v4l2_s_input(exynos_camera, 0, id);
+	if (rc < 0) {
+		ALOGE("%s: Unable to set inputs", __func__);
+		goto error;
+	}
+
+	rc = exynos_camera_params_apply(exynos_camera, 1);
+	if (rc < 0)
+		ALOGE("%s: Unable to apply params", __func__);
+
+	return 0;
+
+error:
+	exynos_v4l2_close(exynos_camera, 0);
+	return -1;
+}
+#endif
+
 int exynos_camera_preview_start(struct exynos_camera *exynos_camera)
 {
 	if (exynos_camera == NULL)
@@ -2757,6 +2827,11 @@ int exynos_camera_preview_start(struct exynos_camera *exynos_camera)
 		ALOGE("Preview was already started!");
 		return -1;
 	}
+
+#ifdef EXYNOS_M9MO
+	if (exynos_camera_sensor_start(exynos_camera) < 0)
+		return -1;
+#endif
 
 	exynos_camera_capture_thread_start(exynos_camera);
 	exynos_camera_capture_setup(exynos_camera);
@@ -3568,12 +3643,31 @@ void exynos_camera_auto_focus_stop(struct exynos_camera *exynos_camera)
 
 }
 #else
+#ifdef EXYNOS_M9MO
+/*
+ * m9mo_get_af_result() returns 0x1000 while the lens is still focusing,
+ * 0 on failure and any other value on success.
+ */
+#define M9MO_AUTO_FOCUS_IN_PROGRESS	0x1000
+#define M9MO_AUTO_FOCUS_FAIL		0
+#endif
+
 int exynos_camera_auto_focus(struct exynos_camera *exynos_camera, int auto_focus_status)
 {
 	if (exynos_camera == NULL)
 		return -EINVAL;
 
 //	ALOGD("%s()", __func__);
+
+#ifdef EXYNOS_M9MO
+	if (auto_focus_status == M9MO_AUTO_FOCUS_IN_PROGRESS)
+		return 0;
+
+	if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_FOCUS) && EXYNOS_CAMERA_CALLBACK_DEFINED(notify) && !exynos_camera->callback_lock)
+		exynos_camera->callbacks.notify(CAMERA_MSG_FOCUS, auto_focus_status != M9MO_AUTO_FOCUS_FAIL, 0, exynos_camera->callbacks.user);
+
+	return 0;
+#endif
 
 	switch (auto_focus_status) {
 	  case ISX012_AUTO_FOCUS_IN_PROGRESS:
@@ -3599,6 +3693,9 @@ void *exynos_camera_auto_focus_thread(void *data)
 	struct exynos_camera *exynos_camera;
 	int auto_focus_status = CAMERA_AF_STATUS_FAIL;
 	int auto_focus_completed = 0;
+#ifdef EXYNOS_M9MO
+	int auto_focus_polls = 0;
+#endif
 	int rc;
 
 	if (data == NULL)
@@ -3623,10 +3720,22 @@ void *exynos_camera_auto_focus_thread(void *data)
 			ALOGE("%s: Unable to auto-focus", __func__);
 			     auto_focus_status = CAMERA_AF_STATUS_FAIL;
 		}
+#ifdef EXYNOS_M9MO
+		// Give the lens 4 s to focus, then report a failure
+		if (auto_focus_status == M9MO_AUTO_FOCUS_IN_PROGRESS && ++auto_focus_polls > 400) {
+			ALOGE("%s: auto-focus timed out", __func__);
+			exynos_camera_auto_focus(exynos_camera, M9MO_AUTO_FOCUS_FAIL);
+			auto_focus_completed = 1;
+		} else if (auto_focus_status == M9MO_AUTO_FOCUS_IN_PROGRESS)
+			usleep(10000);
+		else
+			auto_focus_completed = 1;
+#else
 		if (auto_focus_status == ISX012_AUTO_FOCUS_IN_PROGRESS || auto_focus_status == CAMERA_AF_STATUS_IN_PROGRESS)
 		        usleep(10000);
 		else
 			auto_focus_completed = 1;
+#endif
 
 		pthread_mutex_unlock(&exynos_camera->auto_focus_mutex);
 
@@ -3719,6 +3828,17 @@ void exynos_camera_auto_focus_thread_stop(struct exynos_camera *exynos_camera)
 	rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_SET_AUTO_FOCUS, AUTO_FOCUS_OFF);
 	if (rc < 0)
 		ALOGE("%s: Unable to set auto-focus off", __func__);
+
+#ifdef EXYNOS_M9MO
+	/*
+	 * The M9MO locks AE and AWB when a single AF starts, and m9mo_set_af()
+	 * only unlocks them on stop when the AF had finished. Unlock them
+	 * explicitly, or a cancelled AF leaves the exposure frozen.
+	 */
+	rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_AEAWB_LOCK_UNLOCK, AE_UNLOCK_AWB_UNLOCK);
+	if (rc < 0)
+		ALOGE("%s: Unable to unlock AE/AWB", __func__);
+#endif
 
 	pthread_mutex_destroy(&exynos_camera->auto_focus_mutex);
 }
