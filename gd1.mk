@@ -47,6 +47,10 @@ PRODUCT_PACKAGES += \
 PRODUCT_PROPERTY_OVERRIDES += \
     ro.telephony.ril_class=SamsungExynos4RIL
 
+# Sensors (LSM330 accelerometer and gyroscope, AK8963C compass)
+PRODUCT_PACKAGES += \
+    sensors.smdk4x12
+
 # Proprietary blobs dependency on libstlport
 PRODUCT_PACKAGES += \
     libstlport
