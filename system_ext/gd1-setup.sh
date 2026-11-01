@@ -5,7 +5,8 @@
 #   so without it nothing would mark the device as provisioned.
 # - Disable the Mainline (APEX) apps a camera does not need. They cannot be
 #   overridden in the build like the plain system apps (see RemovePackages).
-# - Apply the camera-first quick settings tiles and the Rome time zone once.
+# - Apply the camera-first quick settings tiles, the Rome time zone and the
+#   24-hour clock once.
 # Runs on every boot; all steps are no-ops once done. Output: logcat -s gd1-setup
 # Never disable com.android.sdksandbox: PackageManagerService requires it
 # and system_server crashes at boot without it.
@@ -32,10 +33,12 @@ if [ "$(settings get secure gd1_firstboot_done)" != 1 ]; then
     kill $(pidof com.android.systemui)
     settings put secure sysui_qs_tiles internet,bt,airplane,rotation,location,battery,dark,caffeine
     setprop persist.sys.timezone Europe/Rome
+    # 24-hour clock (user, 2026-11-01)
+    settings put system time_12_24 24
     # No "Discover Trust" onboarding notification
     settings put --lineage system trust_interface_hinted 1
     settings put secure gd1_firstboot_done 1
-    log -t gd1-setup "quick settings tiles, time zone and Trust hint set"
+    log -t gd1-setup "quick settings tiles, time zone, 24-hour clock and Trust hint set"
 fi
 
 for p in \
