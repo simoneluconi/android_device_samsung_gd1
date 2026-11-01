@@ -437,4 +437,10 @@
 
     <!-- A camera turns on straight into use: no lock screen by default -->
     <bool name="config_disableLockscreenByDefault">true</bool>
+
+    <!-- Do not wake the screen on USB plug changes. The MAX77693 charger
+         re-reports the cable each time it cycles between charging and full,
+         so with smdk4412-common's "true" the screen kept turning itself on
+         while the camera sat on USB. -->
+    <bool name="config_unplugTurnsOnScreen">false</bool>
 </resources>
