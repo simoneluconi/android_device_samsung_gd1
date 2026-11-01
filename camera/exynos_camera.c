@@ -21,6 +21,7 @@
 
 #include <fcntl.h>
 #include <unistd.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include <errno.h>
@@ -36,6 +37,7 @@
 #define LOG_TAG "exynos_camera"
 #include <utils/Log.h>
 #include <utils/Timers.h>
+#include <cutils/properties.h>
 
 #include "exynos_camera.h"
 
@@ -2124,6 +2126,12 @@ void exynos_camera_picture_thread_start(struct exynos_camera *exynos_camera)
 {
 	int rc;
 
+#ifdef EXYNOS_M9MO
+	// M9MO stills come from exynos_camera_m9mo_picture(), not from frames
+	// of the preview stream
+	return;
+#endif
+
 	if (exynos_camera->picture_running)
 		return;
 
@@ -3217,18 +3225,88 @@ complete:
  * The JPEG is passed on as the ISP made it; EXIF is left to the app for
  * now.
  */
+/*
+ * RAW (persist.vendor.camera.raw=1, bring-up): RUNNING_MODE_RAW makes the
+ * ISP send two frames per shot, frame 0 the raw sensor data (CAPTURE=0) and
+ * frame 1 the 16MP JPEG (CAPTURE=1, which also returns the ISP to monitor
+ * mode). Frame 1 must always be read, or the ISP stays in still capture.
+ * The raw frame goes to the app through CAMERA_MSG_RAW_IMAGE and, for now,
+ * to /data/vendor/camera/IMG_<time>.raw for analysis: m9mo.c does not tell
+ * its bit depth, packing or Bayer order.
+ */
+#define M9MO_RAW_DIR	"/data/vendor/camera"
+
+static int exynos_camera_m9mo_get_frame(struct exynos_camera *exynos_camera,
+	int which, int *size)
+{
+	int rc, i;
+
+	rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_CAPTURE, which);
+	if (rc < 0) {
+		ALOGE("%s: Unable to start the transfer of frame %d", __func__, which);
+		return -1;
+	}
+
+	for (i = 0, rc = 0; rc == 0 && i < 5; i++)
+		rc = exynos_v4l2_poll(exynos_camera, 0);
+	if (rc <= 0) {
+		ALOGE("%s: No frame %d", __func__, which);
+		return -1;
+	}
+
+	rc = exynos_v4l2_dqbuf_cap(exynos_camera, 0);
+	if (rc < 0) {
+		ALOGE("%s: Unable to dequeue frame %d", __func__, which);
+		return -1;
+	}
+
+	rc = exynos_v4l2_g_ctrl(exynos_camera, 0, V4L2_CID_CAM_JPEG_MAIN_SIZE, size);
+	if (rc < 0 || *size <= 0) {
+		ALOGE("%s: Invalid size %d for frame %d", __func__, *size, which);
+		return -1;
+	}
+
+	return 0;
+}
+
+static void exynos_camera_m9mo_save_raw(void *data, int size, int width, int height)
+{
+	char path[128];
+	time_t now = time(NULL);
+	struct tm tm;
+	FILE *file;
+
+	localtime_r(&now, &tm);
+	snprintf(path, sizeof(path), M9MO_RAW_DIR "/IMG_%04d%02d%02d_%02d%02d%02d.raw",
+		tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+
+	file = fopen(path, "wb");
+	if (file == NULL) {
+		ALOGE("%s: Unable to open %s", __func__, path);
+		return;
+	}
+	fwrite(data, 1, size, file);
+	fclose(file);
+
+	// Bytes per pixel at the nominal size: 1.25 = RAW10 packed, 1.5 = RAW12
+	ALOGD("%s: %s, %d bytes, %.3f bytes per pixel at %dx%d", __func__, path,
+		size, (double) size / (width * height), width, height);
+}
+
 void *exynos_camera_m9mo_picture(void *data)
 {
 	struct exynos_camera *exynos_camera = (struct exynos_camera *) data;
 	camera_memory_t *buffer = NULL;
 	camera_memory_t *jpeg = NULL;
+	camera_memory_t *raw_memory = NULL;
 	int width = exynos_camera->picture_width;
 	int height = exynos_camera->picture_height;
+	int raw = property_get_bool("persist.vendor.camera.raw", 0);
 	int streaming = 0;
 	int length, size = 0;
 	int fd, rc, i;
 
-	ALOGD("%s(): %dx%d", __func__, width, height);
+	ALOGD("%s(): %dx%d%s", __func__, width, height, raw ? ", RAW" : "");
 
 	// take_picture() holds the callback lock until picture_start returns
 	for (i = 0; exynos_camera->callback_lock && i < 1000; i++)
@@ -3249,10 +3327,22 @@ void *exynos_camera_m9mo_picture(void *data)
 	// Free the preview buffers: the JPEG buffer needs most of FIMC0's memory
 	exynos_v4l2_reqbufs_cap(exynos_camera, 0, 0);
 
+	// SINGLE first even for RAW: RUNNING_MODE_RAW does not reset CAP_MODE
 	rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_CAPTURE_MODE, RUNNING_MODE_SINGLE);
 	if (rc < 0) {
 		ALOGE("%s: Unable to set the capture mode", __func__);
 		goto error;
+	}
+
+	if (raw) {
+		// Frame 0 is taken at the picture size: use the full 16MP
+		width = 4608;
+		height = 3456;
+		rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_CAPTURE_MODE, RUNNING_MODE_RAW);
+		if (rc < 0) {
+			ALOGE("%s: Unable to set the RAW capture mode", __func__);
+			goto error;
+		}
 	}
 
 	rc = exynos_v4l2_s_fmt_pix_cap(exynos_camera, 0, width, height, V4L2_PIX_FMT_JPEG, V4L2_PIX_FMT_MODE_CAPTURE);
@@ -3315,27 +3405,36 @@ void *exynos_camera_m9mo_picture(void *data)
 		goto error;
 	}
 
-	rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_CAPTURE, 0);
-	if (rc < 0) {
-		ALOGE("%s: Unable to start the JPEG transfer", __func__);
-		goto error;
+	if (raw) {
+		// Frame 0: the raw sensor data
+		rc = exynos_camera_m9mo_get_frame(exynos_camera, 0, &size);
+		if (rc == 0) {
+			if (size > length) {
+				ALOGE("%s: RAW frame of %d bytes truncated to the %d byte buffer", __func__, size, length);
+				size = length;
+			}
+
+			exynos_camera_m9mo_save_raw(buffer->data, size, width, height);
+
+			if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_RAW_IMAGE) && EXYNOS_CAMERA_CALLBACK_DEFINED(data)) {
+				raw_memory = exynos_camera->callbacks.request_memory(-1, size, 1, exynos_camera->callbacks.user);
+				if (raw_memory != NULL && raw_memory->data != NULL && raw_memory->data != MAP_FAILED) {
+					memcpy(raw_memory->data, buffer->data, size);
+					exynos_camera->callbacks.data(CAMERA_MSG_RAW_IMAGE, raw_memory, 0, NULL, exynos_camera->callbacks.user);
+				}
+			}
+		}
+
+		// Frame 1 (the JPEG) must always follow, or the ISP stays in still
+		// capture with CAPPARM 0x78 set
+		exynos_v4l2_qbuf_cap(exynos_camera, 0, 0);
 	}
 
-	for (i = 0, rc = 0; rc == 0 && i < 5; i++)
-		rc = exynos_v4l2_poll(exynos_camera, 0);
-	if (rc <= 0) {
-		ALOGE("%s: No JPEG frame", __func__);
+	rc = exynos_camera_m9mo_get_frame(exynos_camera, raw ? 1 : 0, &size);
+	if (rc < 0)
 		goto error;
-	}
 
-	rc = exynos_v4l2_dqbuf_cap(exynos_camera, 0);
-	if (rc < 0) {
-		ALOGE("%s: Unable to dequeue the JPEG frame", __func__);
-		goto error;
-	}
-
-	rc = exynos_v4l2_g_ctrl(exynos_camera, 0, V4L2_CID_CAM_JPEG_MAIN_SIZE, &size);
-	if (rc < 0 || size <= 0 || size > length) {
+	if (size > length) {
 		ALOGE("%s: Invalid JPEG size %d", __func__, size);
 		goto error;
 	}
@@ -3371,6 +3470,13 @@ complete:
 
 	if (jpeg != NULL && jpeg->release != NULL)
 		jpeg->release(jpeg);
+
+	if (raw_memory != NULL && raw_memory->release != NULL)
+		raw_memory->release(raw_memory);
+
+	// The driver keeps running_capture_mode: go back to single shots
+	if (raw)
+		exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_CAPTURE_MODE, RUNNING_MODE_SINGLE);
 
 	exynos_camera->picture_enabled = 0;
 
