@@ -3231,8 +3231,11 @@ complete:
  * frame 1 the 16MP JPEG (CAPTURE=1, which also returns the ISP to monitor
  * mode). Frame 1 must always be read, or the ISP stays in still capture.
  * The raw frame goes to the app through CAMERA_MSG_RAW_IMAGE and, for now,
- * to /data/vendor/camera/IMG_<time>.raw for analysis: m9mo.c does not tell
- * its bit depth, packing or Bayer order.
+ * to /data/vendor/camera/IMG_<time>.raw. Its layout, found on the device
+ * (tools/m9mo-raw.py): 20440000 bytes, a continuous big-endian 10-bit
+ * stream, 4736 pixels (5920 bytes) per row, 3452 rows and a 4160-byte tail,
+ * GRBG. It is the full lens image circle, without the ISP's distortion and
+ * vignetting correction.
  */
 #define M9MO_RAW_DIR	"/data/vendor/camera"
 
@@ -3425,9 +3428,23 @@ void *exynos_camera_m9mo_picture(void *data)
 			}
 		}
 
-		// Frame 1 (the JPEG) must always follow, or the ISP stays in still
-		// capture with CAPPARM 0x78 set
-		exynos_v4l2_qbuf_cap(exynos_camera, 0, 0);
+		/*
+		 * Frame 1 (the JPEG) must always follow, or the ISP stays in still
+		 * capture with CAPPARM 0x78 set. FIMC stops after each frame in
+		 * JPEG mode (lastend), so restart it first; the M9MO is already in
+		 * still capture, so STREAMON does not start another exposure.
+		 */
+		exynos_v4l2_streamoff_cap(exynos_camera, 0);
+		streaming = 0;
+
+		rc = exynos_v4l2_qbuf_cap(exynos_camera, 0, 0);
+		if (rc >= 0)
+			rc = exynos_v4l2_streamon_cap(exynos_camera, 0);
+		if (rc < 0) {
+			ALOGE("%s: Unable to restart the capture for the JPEG", __func__);
+			goto error;
+		}
+		streaming = 1;
 	}
 
 	rc = exynos_camera_m9mo_get_frame(exynos_camera, raw ? 1 : 0, &size);
@@ -4535,6 +4552,38 @@ int exynos_camera_set_parameters(struct camera_device *dev,
 	return 0;
 }
 
+#ifdef EXYNOS_M9MO
+/*
+ * The pop-up flash state, read from the ISP: G_CTRL FLASH_MODE returns
+ * CAPPARM STROBE_CHARGE in bits 0-7 and STROBE_UP_DOWN in bits 8-15.
+ * The app decides what to do with a closed flash; the HAL only reports it.
+ * Exposed as the vendor parameters m9mo-strobe-up-down and
+ * m9mo-strobe-charge until their values are decoded on the device.
+ */
+static void exynos_camera_m9mo_flash_status(struct exynos_camera *exynos_camera)
+{
+	static int last = -1;
+	int value = 0;
+	int rc;
+
+	// Only with the ISP powered, and not while a capture owns the device
+	if (exynos_v4l2_fd(exynos_camera, 0) < 0 || exynos_camera->picture_enabled)
+		return;
+
+	rc = exynos_v4l2_g_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_FLASH_MODE, &value);
+	if (rc < 0)
+		return;
+
+	if (value != last) {
+		ALOGD("%s: strobe charge %d, up/down %d", __func__, value & 0xff, (value >> 8) & 0xff);
+		last = value;
+	}
+
+	exynos_param_int_set(exynos_camera, "m9mo-strobe-charge", value & 0xff);
+	exynos_param_int_set(exynos_camera, "m9mo-strobe-up-down", (value >> 8) & 0xff);
+}
+#endif
+
 char *exynos_camera_get_parameters(struct camera_device *dev)
 {
 	struct exynos_camera *exynos_camera;
@@ -4546,6 +4595,10 @@ char *exynos_camera_get_parameters(struct camera_device *dev)
 		return NULL;
 
 	exynos_camera = (struct exynos_camera *) dev->priv;
+
+#ifdef EXYNOS_M9MO
+	exynos_camera_m9mo_flash_status(exynos_camera);
+#endif
 
 	params = exynos_params_string_get(exynos_camera);
 	if (params == NULL) {
