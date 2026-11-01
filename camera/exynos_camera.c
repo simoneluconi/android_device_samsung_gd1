@@ -191,7 +191,7 @@ struct exynos_camera_preset exynos_camera_presets_smdk4x12[] = {
 			.effect_values = "none",
 
 			.iso = "auto",
-			.iso_values = "auto,ISO100,ISO200,ISO400,ISO800",
+			.iso_values = "auto,ISO100,ISO200,ISO400,ISO800,ISO1600,ISO3200",
 
 			.image_stabilization = "off",
 			.image_stabilization_values = "on,off",
@@ -736,6 +736,35 @@ void exynos_camera_stop(struct exynos_camera *exynos_camera)
 
 // Params
 
+#ifdef EXYNOS_M9MO
+// The M9MO's shutter speeds, as m9mo_set_shutter_speed() indexes them (1-30)
+#define M9MO_SHUTTER_SPEED_VALUES \
+	"16,12,8,6,4,3,2,1.5,1,0.7,0.5,1/3,1/4,1/6,1/8,1/15,1/20,1/30,1/45,1/60," \
+	"1/90,1/125,1/180,1/250,1/350,1/500,1/750,1/1000,1/1500,1/2000"
+
+static int exynos_camera_m9mo_shutter_index(const char *value)
+{
+	const char *values = M9MO_SHUTTER_SPEED_VALUES;
+	size_t length = strlen(value);
+	int index = 1;
+
+	while (*values != '\0') {
+		if (strncmp(values, value, length) == 0 &&
+			(values[length] == ',' || values[length] == '\0'))
+			return index;
+
+		values = strchr(values, ',');
+		if (values == NULL)
+			break;
+		values++;
+		index++;
+	}
+
+	ALOGE("%s: Unknown shutter speed %s", __func__, value);
+	return -1;
+}
+#endif
+
 int exynos_camera_params_init(struct exynos_camera *exynos_camera, int id)
 {
 	int rc;
@@ -883,6 +912,15 @@ int exynos_camera_params_init(struct exynos_camera *exynos_camera, int id)
 		property_get_int32("persist.vendor.camera.raw.black", 64));
 	exynos_param_int_set(exynos_camera, "raw-white-level",
 		property_get_int32("persist.vendor.camera.raw.white", 1023));
+
+	// P/A/S/M, see exynos_camera_params_apply()
+	exynos_param_string_set(exynos_camera, "pasm-mode", "auto");
+	exynos_param_string_set(exynos_camera, "pasm-mode-values", "auto,program,aperture,shutter,manual");
+	exynos_param_string_set(exynos_camera, "shutter-speed", "1/60");
+	exynos_param_string_set(exynos_camera, "shutter-speed-values", M9MO_SHUTTER_SPEED_VALUES);
+	exynos_param_int_set(exynos_camera, "aperture", 28);
+	exynos_param_string_set(exynos_camera, "aperture-values", "28,32,35,40,45,50,56,63,71,80");
+	exynos_camera->pasm_mode = -1;
 #endif
 
 	// AE lock
@@ -1077,6 +1115,13 @@ int exynos_camera_params_apply(struct exynos_camera *exynos_camera, int force)
 	int effect;
 
 	char *iso_string;
+#ifdef EXYNOS_M9MO
+	char *pasm_string;
+	char *shutter_string;
+	int pasm_mode;
+	int shutter_speed;
+	int f_number;
+#endif
 	int iso;
 
 	char *image_stabilization_string;
@@ -1610,6 +1655,34 @@ int exynos_camera_params_apply(struct exynos_camera *exynos_camera, int force)
 		}
 	}
 
+#ifdef EXYNOS_M9MO
+	/*
+	 * Bring-up: drive P/A/S/M from adb while OpenCamera, which does not know
+	 * these parameters, is the camera app. Not persistent, read on every
+	 * setParameters (e.g. a tap to focus):
+	 *   setprop vendor.camera.test.pasm aperture
+	 *   setprop vendor.camera.test.aperture 56
+	 * and likewise .shutter (1/125) and .iso (ISO400).
+	 */
+	{
+		static const char *overrides[][2] = {
+			{ "vendor.camera.test.pasm", "pasm-mode" },
+			{ "vendor.camera.test.shutter", "shutter-speed" },
+			{ "vendor.camera.test.iso", "iso" },
+		};
+		char value[PROPERTY_VALUE_MAX];
+		unsigned int i;
+
+		for (i = 0; i < sizeof(overrides) / sizeof(overrides[0]); i++)
+			if (property_get(overrides[i][0], value, "") > 0)
+				exynos_param_string_set(exynos_camera, (char *) overrides[i][1], value);
+
+		// aperture is an int parameter: a string set fails on the type
+		if (property_get("vendor.camera.test.aperture", value, "") > 0)
+			exynos_param_int_set(exynos_camera, "aperture", atoi(value));
+	}
+#endif
+
 	// ISO
 
 	iso_string = exynos_param_string_get(exynos_camera, "iso");
@@ -1626,8 +1699,19 @@ int exynos_camera_params_apply(struct exynos_camera *exynos_camera, int force)
 			iso = ISO_400;
 		else if (strcmp(iso_string, "ISO800") == 0)
 			iso = ISO_800;
+		else if (strcmp(iso_string, "ISO1600") == 0)
+			iso = ISO_1600;
+		else if (strcmp(iso_string, "ISO3200") == 0)
+			iso = ISO_3200;
 		else
 			iso = ISO_AUTO;
+
+#ifdef EXYNOS_M9MO
+		// M needs a fixed ISO: the ISP's manual program takes it as is
+		pasm_string = exynos_param_string_get(exynos_camera, "pasm-mode");
+		if (iso == ISO_AUTO && pasm_string != NULL && strcmp(pasm_string, "manual") == 0)
+			iso = ISO_100;
+#endif
 
 		if (iso != exynos_camera->iso || force) {
 			exynos_camera->iso = iso;
@@ -1636,6 +1720,72 @@ int exynos_camera_params_apply(struct exynos_camera *exynos_camera, int force)
 				ALOGE("%s: Unable to set iso", __func__);
 		}
 	}
+
+#ifdef EXYNOS_M9MO
+	/*
+	 * P/A/S/M: the M9MO runs the exposure program itself; the HAL only
+	 * passes the mode and the fixed values (m9mo_set_PASM_mode()).
+	 * - pasm-mode: auto (the ISP's default program, left untouched at
+	 *   open; Samsung's smart auto when coming back from another mode),
+	 *   program, aperture, shutter or manual;
+	 * - shutter-speed: one of shutter-speed-values (16 s to 1/2000), the
+	 *   ISP's own steps, sent as their index 1-30;
+	 * - aperture: f-number x10 (28 = f/2.8), one of aperture-values; the
+	 *   ISP limits it to what the lens allows at the current zoom.
+	 * The values go first: the mode switch writes the stored ones.
+	 * The exposure the ISP chose comes back in exif-* after each shot.
+	 */
+	pasm_string = exynos_param_string_get(exynos_camera, "pasm-mode");
+	shutter_string = exynos_param_string_get(exynos_camera, "shutter-speed");
+	f_number = exynos_param_int_get(exynos_camera, "aperture");
+
+	// In auto the ISP's program stays untouched
+	if (pasm_string == NULL || strcmp(pasm_string, "auto") == 0)
+		goto pasm_mode;
+
+	if (shutter_string != NULL) {
+		shutter_speed = exynos_camera_m9mo_shutter_index(shutter_string);
+		if (shutter_speed > 0 && (shutter_speed != exynos_camera->shutter_speed || force)) {
+			exynos_camera->shutter_speed = shutter_speed;
+			rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_SHUTTER_SPEED, shutter_speed);
+			if (rc < 0)
+				ALOGE("%s: Unable to set the shutter speed", __func__);
+		}
+	}
+
+	if (f_number >= 10 && f_number <= 159 && (f_number != exynos_camera->f_number || force)) {
+		exynos_camera->f_number = f_number;
+		rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_F_NUMBER, f_number);
+		if (rc < 0)
+			ALOGE("%s: Unable to set the aperture", __func__);
+	}
+
+pasm_mode:
+	if (pasm_string != NULL) {
+		if (strcmp(pasm_string, "program") == 0)
+			pasm_mode = MODE_PROGRAM;
+		else if (strcmp(pasm_string, "aperture") == 0)
+			pasm_mode = MODE_A;
+		else if (strcmp(pasm_string, "shutter") == 0)
+			pasm_mode = MODE_S;
+		else if (strcmp(pasm_string, "manual") == 0)
+			pasm_mode = MODE_M;
+		else
+			pasm_mode = -1;
+
+		if (pasm_mode != exynos_camera->pasm_mode || (force && pasm_mode >= 0)) {
+			// Back to auto from another mode: Samsung's smart auto program
+			rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_PASM_MODE,
+				pasm_mode >= 0 ? pasm_mode : MODE_SMART_AUTO);
+			if (rc < 0)
+				ALOGE("%s: Unable to set the exposure mode", __func__);
+			ALOGD("%s: exposure mode %s, shutter %s, f/%d.%d, iso %d", __func__,
+				pasm_string, shutter_string != NULL ? shutter_string : "-",
+				f_number / 10, f_number % 10, exynos_camera->iso);
+			exynos_camera->pasm_mode = pasm_mode;
+		}
+	}
+#endif
 
 	// Image stabilization (Anti-shake)
 

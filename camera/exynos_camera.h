@@ -434,6 +434,9 @@ struct exynos_camera {
 	int scene_mode;
 	int effect;
 	int iso;
+	int pasm_mode;
+	int shutter_speed;
+	int f_number;
 	int metering;
 	int image_stabilization;
 	char raw_focus_areas[PAGE_SIZE];
