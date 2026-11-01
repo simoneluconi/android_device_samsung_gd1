@@ -1,0 +1,3 @@
+/vendor/bin/cbd                                                        u:object_r:cpboot-daemon_exec:s0
+/vendor/bin/gpsd                                                       u:object_r:gpsd_exec:s0
+/vendor/bin/hw/android\.hardware\.gnss@1\.0-service\.exynos4           u:object_r:hal_gnss_default_exec:s0

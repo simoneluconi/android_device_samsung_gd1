@@ -15,6 +15,11 @@ MALLOC_SVELTE := true
 TARGET_NEEDS_PLATFORM_TEXT_RELOCATIONS := true
 LIBART_IMG_BASE := 0x30000000
 
+# The linker matches these against the executable only: the GNSS service
+# dlopens the stock GPS HAL, which has text relocations
+TARGET_PROCESS_SDK_VERSION_OVERRIDE += \
+    /vendor/bin/hw/android.hardware.gnss@1.0-service.exynos4=22
+
 # Graphics
 TARGET_REQUIRES_SYNCHRONOUS_SETSURFACE := true
 
@@ -45,6 +50,11 @@ DEVICE_FRAMEWORK_COMPATIBILITY_MATRIX_FILE += $(DEVICE_PATH)/framework_compatibi
 # SELinux permissive for bring-up (honoured on userdebug only): there is no
 # device policy for the vendor services yet. See docs/TODO.md.
 BOARD_KERNEL_CMDLINE += androidboot.selinux=permissive
+
+# Minimal device policy: domains for the vendor daemons that init must
+# start in their own context (cbd, gpsd). smdk4412-common's selinux/ is
+# not wired into the build and is older than html6405's shipped policy.
+BOARD_VENDOR_SEPOLICY_DIRS += $(DEVICE_PATH)/sepolicy/vendor
 
 # Root folders: only /efs is mounted. The common tree also creates /misc
 # (a raw partition here), /preload (HIDDEN is our /vendor) and a /tombstones

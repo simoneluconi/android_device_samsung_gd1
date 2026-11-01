@@ -47,10 +47,20 @@ on boot
 
 # Changing scheduler to noop during boot
     write /sys/block/mmcblk0/queue/scheduler noop
-    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ondemand
+# pegasusq (the kernel default) also hotplugs CPUs 1-3, which lets the 4412
+# reach its deep idle states; ondemand keeps all four cores online
+    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor pegasusq
 
 on property:sys.boot_completed=1
     setprop sys.usb.configfs 1
+    setprop vendor.gd1.boot_completed 1
+
+# smdk4412-common sets pegasusq min_cpu_lock to 2 on the same trigger, which
+# keeps two cores online for good. The 4412 reaches its deep idle state
+# (AFTR) only with CPU0 alone, so release the lock. A property set here runs
+# its trigger after every sys.boot_completed action, the common one included.
+on property:vendor.gd1.boot_completed=1
+    write /sys/devices/system/cpu/cpufreq/pegasusq/min_cpu_lock 0
 
     # KSM
     write /sys/kernel/mm/ksm/deferred_timer 1
@@ -78,6 +88,8 @@ on post-fs-data
     restorecon_recursive /efs
 
 # GPS init
+    mkdir /data/gps 0771 gps system
+    mkdir /data/gps/log 0770 gps system
 
     write /data/.cid.info 0
     restorecon /data/.cid.info
@@ -116,13 +128,27 @@ on property:sys.usb.state=adb && property:vendor.gd1.usb.extra=,acm
 on property:sys.usb.state=mtp,adb && property:vendor.gd1.usb.extra=,acm
     start gd1_console
 
-on boot
-# cbd
+# cbd: loads the XMM6262 firmware from RADIO and /efs/nv_data.bin, then
+# watches the modem
 service cpboot-daemon /vendor/bin/cbd -d
     class main
     user root
     group radio cache inet misc audio sdcard_rw log
     seclabel u:r:cpboot-daemon:s0
 
+# GPS: BCM4752 on ttySAC1, powered through GPS_PWR_EN by the daemon
+on boot
+    chown root system /dev/ttySAC1
+    chmod 0660 /dev/ttySAC1
+    chown root system /sys/class/sec/gps/GPS_PWR_EN/value
+    chmod 0664 /sys/class/sec/gps/GPS_PWR_EN/value
+    chown root system /sys/class/sec/gps/GPS_nRST/value
+    chmod 0664 /sys/class/sec/gps/GPS_nRST/value
 
-# Start GPS daemon
+service gpsd /vendor/bin/gpsd -c /vendor/etc/gps.xml
+    class main
+    socket gps seqpacket 0660 gps system
+    user gps
+    group system inet wakelock sdcard_rw sdcard_r
+    setenv LD_PRELOAD /vendor/lib/libgpsd_shim.so
+    seclabel u:r:gpsd:s0

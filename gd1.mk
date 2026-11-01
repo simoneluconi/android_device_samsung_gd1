@@ -50,6 +50,15 @@ PRODUCT_PACKAGES += \
 PRODUCT_PROPERTY_OVERRIDES += \
     ro.telephony.ril_class=SamsungExynos4RIL
 
+# GPS (BCM4752): the stock daemon and HAL from the vendor blobs, the HAL
+# wrapper and the daemon's symbol shim
+PRODUCT_PACKAGES += \
+    gps.smdk4x12 \
+    libgpsd_shim
+
+PRODUCT_COPY_FILES += \
+    $(LOCAL_PATH)/configs/gps.xml:$(TARGET_COPY_OUT_VENDOR)/etc/gps.xml
+
 # Sensors (LSM330 accelerometer and gyroscope, AK8963C compass)
 PRODUCT_PACKAGES += \
     sensors.smdk4x12

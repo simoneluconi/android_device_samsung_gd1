@@ -1,0 +1,8 @@
+# cbd, the XMM6262 modem boot daemon. Without its own domain init cannot
+# start it at all ("cannot setexeccon"), and 3G never comes up.
+# Permissive until the device policy is written (docs/TODO.md).
+type cpboot-daemon, domain;
+type cpboot-daemon_exec, exec_type, vendor_file_type, file_type;
+
+init_daemon_domain(cpboot-daemon)
+permissive cpboot-daemon;
