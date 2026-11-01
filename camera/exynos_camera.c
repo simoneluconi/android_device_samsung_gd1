@@ -3204,6 +3204,180 @@ complete:
 	return NULL;
 }
 
+#ifdef EXYNOS_M9MO
+/*
+ * M9MO still capture, in its own FIMC session (m9mo.c, fimc_capture.c):
+ * - stop the preview; as with any HAL1 takePicture, the app restarts it;
+ * - CAPTURE_MODE single, then a JPEG S_FMT at the picture size on the
+ *   capture and the private type, both with MODE_CAPTURE;
+ * - one buffer (M9MO_JPEG_MAXSIZE, 25 MB), STREAMON: the ISP exposes here,
+ *   up to 35 s for long shutters;
+ * - STREAM_PART2 waits for the capture, CAPTURE starts the JPEG transfer;
+ * - DQBUF, then the JPEG size from V4L2_CID_CAM_JPEG_MAIN_SIZE.
+ * The JPEG is passed on as the ISP made it; EXIF is left to the app for
+ * now.
+ */
+void *exynos_camera_m9mo_picture(void *data)
+{
+	struct exynos_camera *exynos_camera = (struct exynos_camera *) data;
+	camera_memory_t *buffer = NULL;
+	camera_memory_t *jpeg = NULL;
+	int width = exynos_camera->picture_width;
+	int height = exynos_camera->picture_height;
+	int streaming = 0;
+	int length, size = 0;
+	int fd, rc, i;
+
+	ALOGD("%s(): %dx%d", __func__, width, height);
+
+	// take_picture() holds the callback lock until picture_start returns
+	for (i = 0; exynos_camera->callback_lock && i < 1000; i++)
+		usleep(1000);
+
+	/*
+	 * Stop the preview as exynos_camera_stop_preview() does: with the
+	 * callback lock held, so that the capture thread does not call into the
+	 * framework with buffers that are being freed (that crashed with a
+	 * SIGSEGV in the capture thread).
+	 */
+	if (exynos_camera->preview_enabled) {
+		exynos_camera->callback_lock = 1;
+		exynos_camera_preview_stop(exynos_camera);
+		exynos_camera->callback_lock = 0;
+	}
+
+	// Free the preview buffers: the JPEG buffer needs most of FIMC0's memory
+	exynos_v4l2_reqbufs_cap(exynos_camera, 0, 0);
+
+	rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_CAPTURE_MODE, RUNNING_MODE_SINGLE);
+	if (rc < 0) {
+		ALOGE("%s: Unable to set the capture mode", __func__);
+		goto error;
+	}
+
+	rc = exynos_v4l2_s_fmt_pix_cap(exynos_camera, 0, width, height, V4L2_PIX_FMT_JPEG, V4L2_PIX_FMT_MODE_CAPTURE);
+	if (rc < 0) {
+		ALOGE("%s: Unable to set the capture format", __func__);
+		goto error;
+	}
+
+	rc = exynos_v4l2_s_fmt_pix(exynos_camera, 0, V4L2_BUF_TYPE_PRIVATE, width, height, V4L2_PIX_FMT_JPEG, V4L2_FIELD_NONE, V4L2_PIX_FMT_MODE_CAPTURE);
+	if (rc < 0) {
+		ALOGE("%s: Unable to set the sensor capture format", __func__);
+		goto error;
+	}
+
+	rc = exynos_v4l2_reqbufs_cap(exynos_camera, 0, 1);
+	if (rc < 0) {
+		ALOGE("%s: Unable to request a capture buffer", __func__);
+		goto error;
+	}
+
+	length = exynos_v4l2_querybuf_cap(exynos_camera, 0, 0);
+	if (length <= 0) {
+		ALOGE("%s: Unable to query the capture buffer", __func__);
+		goto error;
+	}
+
+	fd = exynos_v4l2_fd(exynos_camera, 0);
+	if (!EXYNOS_CAMERA_CALLBACK_DEFINED(request_memory)) {
+		ALOGE("%s: No memory request function!", __func__);
+		goto error;
+	}
+
+	buffer = exynos_camera->callbacks.request_memory(fd, length, 1, exynos_camera->callbacks.user);
+	if (buffer == NULL || buffer->data == NULL || buffer->data == MAP_FAILED) {
+		ALOGE("%s: Unable to map the capture buffer", __func__);
+		buffer = NULL;
+		goto error;
+	}
+
+	rc = exynos_v4l2_qbuf_cap(exynos_camera, 0, 0);
+	if (rc < 0) {
+		ALOGE("%s: Unable to queue the capture buffer", __func__);
+		goto error;
+	}
+
+	// The exposure happens here
+	rc = exynos_v4l2_streamon_cap(exynos_camera, 0);
+	if (rc < 0) {
+		ALOGE("%s: Unable to start the capture", __func__);
+		goto error;
+	}
+	streaming = 1;
+
+	if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_SHUTTER) && EXYNOS_CAMERA_CALLBACK_DEFINED(notify))
+		exynos_camera->callbacks.notify(CAMERA_MSG_SHUTTER, 0, 0, exynos_camera->callbacks.user);
+
+	rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_STREAM_PART2, 0);
+	if (rc < 0) {
+		ALOGE("%s: Capture did not complete", __func__);
+		goto error;
+	}
+
+	rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_CAPTURE, 0);
+	if (rc < 0) {
+		ALOGE("%s: Unable to start the JPEG transfer", __func__);
+		goto error;
+	}
+
+	for (i = 0, rc = 0; rc == 0 && i < 5; i++)
+		rc = exynos_v4l2_poll(exynos_camera, 0);
+	if (rc <= 0) {
+		ALOGE("%s: No JPEG frame", __func__);
+		goto error;
+	}
+
+	rc = exynos_v4l2_dqbuf_cap(exynos_camera, 0);
+	if (rc < 0) {
+		ALOGE("%s: Unable to dequeue the JPEG frame", __func__);
+		goto error;
+	}
+
+	rc = exynos_v4l2_g_ctrl(exynos_camera, 0, V4L2_CID_CAM_JPEG_MAIN_SIZE, &size);
+	if (rc < 0 || size <= 0 || size > length) {
+		ALOGE("%s: Invalid JPEG size %d", __func__, size);
+		goto error;
+	}
+
+	ALOGD("%s: JPEG of %d bytes", __func__, size);
+
+	jpeg = exynos_camera->callbacks.request_memory(-1, size, 1, exynos_camera->callbacks.user);
+	if (jpeg == NULL || jpeg->data == NULL || jpeg->data == MAP_FAILED) {
+		ALOGE("%s: Unable to request memory", __func__);
+		jpeg = NULL;
+		goto error;
+	}
+
+	memcpy(jpeg->data, buffer->data, size);
+
+	if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_COMPRESSED_IMAGE) && EXYNOS_CAMERA_CALLBACK_DEFINED(data))
+		exynos_camera->callbacks.data(CAMERA_MSG_COMPRESSED_IMAGE, jpeg, 0, NULL, exynos_camera->callbacks.user);
+
+	goto complete;
+
+error:
+	if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_ERROR) && EXYNOS_CAMERA_CALLBACK_DEFINED(notify))
+		exynos_camera->callbacks.notify(CAMERA_MSG_ERROR, -1, 0, exynos_camera->callbacks.user);
+
+complete:
+	if (streaming)
+		exynos_v4l2_streamoff_cap(exynos_camera, 0);
+
+	if (buffer != NULL && buffer->release != NULL)
+		buffer->release(buffer);
+
+	exynos_v4l2_reqbufs_cap(exynos_camera, 0, 0);
+
+	if (jpeg != NULL && jpeg->release != NULL)
+		jpeg->release(jpeg);
+
+	exynos_camera->picture_enabled = 0;
+
+	return NULL;
+}
+#endif
+
 int exynos_camera_picture_start(struct exynos_camera *exynos_camera)
 {
 	int rc;
@@ -3219,15 +3393,31 @@ int exynos_camera_picture_start(struct exynos_camera *exynos_camera)
 	}
 
 #ifdef EXYNOS_M9MO
-	/*
-	 * The M9MO takes stills in a separate FIMC session (stop the preview,
-	 * CAPTURE_MODE, a JPEG S_FMT at the picture size, V4L2_CID_CAMERA_CAPTURE,
-	 * then read V4L2_CID_CAM_JPEG_MAIN_SIZE), not from an interleaved preview
-	 * stream like the S5C73M3 code below. Until that path exists, refuse
-	 * rather than send the ISP commands it would wait on for up to 35 s.
-	 */
-	ALOGE("%s: M9MO still capture is not implemented yet", __func__);
-	return -1;
+	{
+		// The M9MO takes stills in a separate FIMC session, not from an
+		// interleaved preview stream like the S5C73M3 code below
+		pthread_t thread;
+		pthread_attr_t attr;
+
+		if (exynos_v4l2_fd(exynos_camera, 0) < 0) {
+			ALOGE("%s: The camera is not started", __func__);
+			return -1;
+		}
+
+		exynos_camera->picture_enabled = 1;
+
+		pthread_attr_init(&attr);
+		pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+		rc = pthread_create(&thread, &attr, exynos_camera_m9mo_picture, exynos_camera);
+		pthread_attr_destroy(&attr);
+		if (rc != 0) {
+			ALOGE("%s: Unable to create the picture thread", __func__);
+			exynos_camera->picture_enabled = 0;
+			return -1;
+		}
+
+		return 0;
+	}
 #endif
 
 	if (!exynos_camera->camera_fimc_is) {
