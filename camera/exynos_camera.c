@@ -2808,6 +2808,14 @@ int exynos_camera_sensor_start(struct exynos_camera *exynos_camera)
 	if (rc < 0)
 		ALOGE("%s: Unable to apply params", __func__);
 
+	/*
+	 * Fixed 30 fps viewfinder: with the default auto frame rate the ISP
+	 * drops to 15 fps in low light, which doubles the preview lag.
+	 */
+	rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_FRAME_RATE, 30);
+	if (rc < 0)
+		ALOGE("%s: Unable to set the frame rate", __func__);
+
 	return 0;
 
 error:

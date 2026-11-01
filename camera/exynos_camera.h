@@ -41,7 +41,12 @@
 
 #define EXYNOS_CAMERA_MAX_V4L2_NODES_COUNT	4
 
+#ifdef EXYNOS_M9MO
+// Fewer queued frames, less viewfinder lag (6 buffers is up to ~200 ms at 30 fps)
+#define EXYNOS_CAMERA_CAPTURE_BUFFERS_COUNT	3
+#else
 #define EXYNOS_CAMERA_CAPTURE_BUFFERS_COUNT	6
+#endif
 #define EXYNOS_CAMERA_PREVIEW_BUFFERS_COUNT	6
 #define EXYNOS_CAMERA_RECORDING_BUFFERS_COUNT	6
 
