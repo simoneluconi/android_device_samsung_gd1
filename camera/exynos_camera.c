@@ -44,6 +44,22 @@
 #define BIG2LITTLE_ENDIAN(big)	((big & 0xff) << 24 | (big & 0xff00) << 8 | (big & 0xff0000) >> 8 | (big & 0xff000000) >> 24)
 
 /*
+ * callback_lock is held (non-zero) while a HwBinder call runs in the HAL, so
+ * that HAL threads do not call into the framework meanwhile. It counts, so
+ * that overlapping calls (and the picture thread) do not clear each other's
+ * hold.
+ */
+static inline void exynos_camera_callback_lock(struct exynos_camera *exynos_camera)
+{
+	__atomic_add_fetch(&exynos_camera->callback_lock, 1, __ATOMIC_SEQ_CST);
+}
+
+static inline void exynos_camera_callback_unlock(struct exynos_camera *exynos_camera)
+{
+	__atomic_sub_fetch(&exynos_camera->callback_lock, 1, __ATOMIC_SEQ_CST);
+}
+
+/*
  * Devices configurations
  */
 
@@ -618,6 +634,17 @@ int exynos_camera_start(struct exynos_camera *exynos_camera, int id)
 	if (exynos_camera == NULL || id >= exynos_camera->config->presets_count)
 		return -EINVAL;
 
+	// Locks, see exynos_camera.h
+	{
+		pthread_mutexattr_t attr;
+
+		pthread_mutexattr_init(&attr);
+		pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+		pthread_mutex_init(&exynos_camera->params_mutex, &attr);
+		pthread_mutexattr_destroy(&attr);
+		pthread_mutex_init(&exynos_camera->preview_mutex, NULL);
+	}
+
 	// ION
 
 #ifdef EXYNOS_ION
@@ -1118,6 +1145,7 @@ int exynos_camera_params_apply(struct exynos_camera *exynos_camera, int force)
 #ifdef EXYNOS_M9MO
 	char *pasm_string;
 	char *shutter_string;
+	char shutter_value[16];
 	int pasm_mode;
 	int shutter_speed;
 	int f_number;
@@ -1736,7 +1764,10 @@ int exynos_camera_params_apply(struct exynos_camera *exynos_camera, int force)
 	 * The exposure the ISP chose comes back in exif-* after each shot.
 	 */
 	pasm_string = exynos_param_string_get(exynos_camera, "pasm-mode");
-	shutter_string = exynos_param_string_get(exynos_camera, "shutter-speed");
+	// "16" or "0.5" are parsed as numbers, "1/250" as a string: take any
+	shutter_string = NULL;
+	if (exynos_param_value_string(exynos_camera, "shutter-speed", shutter_value, sizeof(shutter_value)) == 0)
+		shutter_string = shutter_value;
 	f_number = exynos_param_int_get(exynos_camera, "aperture");
 
 	// In auto the ISP's program stays untouched
@@ -2267,17 +2298,19 @@ void *exynos_camera_capture_thread(void *data)
 
 	exynos_camera = (struct exynos_camera *) data;
 
-	ALOGE("%s: Starting thread", __func__);
+	ALOGD("%s: Starting thread", __func__);
 	int i = 0;
-	for (i = 0; i < 1000; i++) {
+	for (i = 0; i < 1000 && exynos_camera->capture_thread_enabled; i++) {
 		/*
 		 * We probably can put some condition here to break early,
 		 * but for now just let leave it like that
 		 */
 		usleep(100);
 	}
-	exynos_camera->capture_thread_running = 1;
+	// A start gate: capture_start() opens it once the stream is on, or
+	// capture_thread_stop() to let the thread exit
 	pthread_mutex_lock(&exynos_camera->capture_lock_mutex);
+	pthread_mutex_unlock(&exynos_camera->capture_lock_mutex);
 
 	while (exynos_camera->capture_thread_enabled) {
 		while (exynos_camera->capture_enabled) {
@@ -2289,10 +2322,12 @@ void *exynos_camera_capture_thread(void *data)
 			// Wait a bit to let others lock the mutex if they need to
 			usleep(10);
 		}
+		// Not capturing, or a capture error: do not spin
+		if (exynos_camera->capture_thread_enabled)
+			usleep(10000);
 	}
 
-	exynos_camera->capture_thread_running = 0;
-	ALOGE("%s: Exiting thread", __func__);
+	ALOGD("%s: Exiting thread", __func__);
 
 	return NULL;
 }
@@ -2346,14 +2381,21 @@ int exynos_camera_capture_thread_start(struct exynos_camera *exynos_camera)
 	// Initial lock
 	pthread_mutex_lock(&exynos_camera->capture_lock_mutex);
 
+	// Joinable: capture_thread_stop() waits for it before anything it uses
+	// is freed
 	pthread_attr_init(&thread_attr);
-	pthread_attr_setdetachstate(&thread_attr, PTHREAD_CREATE_DETACHED);
+	pthread_attr_setdetachstate(&thread_attr, PTHREAD_CREATE_JOINABLE);
 
 	exynos_camera->capture_thread_enabled = 1;
+	exynos_camera->capture_thread_running = 1;
 
 	rc = pthread_create(&exynos_camera->capture_thread, &thread_attr, exynos_camera_capture_thread, (void *) exynos_camera);
-	if (rc < 0) {
+	pthread_attr_destroy(&thread_attr);
+	if (rc != 0) {
 		ALOGE("%s: Unable to create thread", __func__);
+		exynos_camera->capture_thread_enabled = 0;
+		exynos_camera->capture_thread_running = 0;
+		pthread_mutex_unlock(&exynos_camera->capture_lock_mutex);
 		goto error;
 	}
 
@@ -2387,23 +2429,17 @@ void exynos_camera_capture_thread_stop(struct exynos_camera *exynos_camera)
 	exynos_camera->capture_enabled = 0;
 	exynos_camera->capture_thread_enabled = 0;
 
+	// Open the start gate, in case capture_start() never did
 	pthread_mutex_unlock(&exynos_camera->capture_lock_mutex);
 
-	// Wait for the thread to end
-	i = 0;
-	while (exynos_camera->capture_thread_running) {
-		if (i++ > 10000) {
-			ALOGE("Capture thread is taking too long to end, something is going wrong");
-			break;
-		}
-		usleep(100);
-	}
-
-	if (exynos_camera->capture_enabled) {
-		pthread_mutex_lock(&exynos_camera->capture_mutex);
-		exynos_camera_capture_stop(exynos_camera);
-		pthread_mutex_unlock(&exynos_camera->capture_mutex);
-	}
+	/*
+	 * Wait for the thread to end. It must be gone before capture_stop()
+	 * frees the capture memory it uses: freeing it under a running thread
+	 * crashed the provider. A blocked DQBUF returns within the 1 s poll
+	 * timeout, or at once after STREAMOFF.
+	 */
+	pthread_join(exynos_camera->capture_thread, NULL);
+	exynos_camera->capture_thread_running = 0;
 
 	pthread_mutex_destroy(&exynos_camera->capture_mutex);
 	pthread_mutex_destroy(&exynos_camera->capture_lock_mutex);
@@ -2695,6 +2731,11 @@ void exynos_camera_capture_stop(struct exynos_camera *exynos_camera)
 		return;
 	}
 
+	// The capture thread leaves its loop on this; STREAMOFF below wakes it
+	// from DQBUF, and capture_thread_stop() waits for it before anything it
+	// uses is freed
+	exynos_camera->capture_enabled = 0;
+
 	if (!exynos_camera->camera_fimc_is) {
 		ALOGD("Disabling hybrid capture");
 		rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_HYBRID, 0);
@@ -2712,6 +2753,8 @@ void exynos_camera_capture_stop(struct exynos_camera *exynos_camera)
 	if (rc < 0) {
 		ALOGE("%s: Unable to stop stream", __func__);
 	}
+
+	exynos_camera_capture_thread_stop(exynos_camera);
 
 	if (exynos_camera->face_data != NULL && exynos_camera->face_data->release != NULL) {
 		exynos_camera->face_data->release(exynos_camera->face_data);
@@ -2735,9 +2778,6 @@ void exynos_camera_capture_stop(struct exynos_camera *exynos_camera)
 
 	if (exynos_camera->exif.enabled)
 		exynos_exif_stop(exynos_camera, &exynos_camera->exif);
-
-	exynos_camera->capture_enabled = 0;
-	exynos_camera_capture_thread_stop(exynos_camera);
 }
 
 int exynos_camera_capture_setup(struct exynos_camera *exynos_camera)
@@ -2987,7 +3027,9 @@ int exynos_camera_sensor_start(struct exynos_camera *exynos_camera)
 		goto error;
 	}
 
+	pthread_mutex_lock(&exynos_camera->params_mutex);
 	rc = exynos_camera_params_apply(exynos_camera, 1);
+	pthread_mutex_unlock(&exynos_camera->params_mutex);
 	if (rc < 0)
 		ALOGE("%s: Unable to apply params", __func__);
 
@@ -3014,20 +3056,34 @@ int exynos_camera_preview_start(struct exynos_camera *exynos_camera)
 
 	ALOGD("%s()", __func__);
 
+	pthread_mutex_lock(&exynos_camera->preview_mutex);
+
 	if (exynos_camera->preview_enabled) {
 		ALOGE("Preview was already started!");
+		pthread_mutex_unlock(&exynos_camera->preview_mutex);
 		return -1;
 	}
 
 #ifdef EXYNOS_M9MO
-	if (exynos_camera_sensor_start(exynos_camera) < 0)
+	// A failed shot left the ISP in still capture: power-cycle it
+	if (exynos_camera->isp_reset_pending) {
+		ALOGE("%s: resetting the ISP after a failed capture", __func__);
+		exynos_v4l2_close(exynos_camera, 0);
+		exynos_camera->isp_reset_pending = 0;
+	}
+
+	if (exynos_camera_sensor_start(exynos_camera) < 0) {
+		pthread_mutex_unlock(&exynos_camera->preview_mutex);
 		return -1;
+	}
 #endif
 
 	exynos_camera_capture_thread_start(exynos_camera);
 	exynos_camera_capture_setup(exynos_camera);
 
 	exynos_camera->preview_enabled = 1;
+
+	pthread_mutex_unlock(&exynos_camera->preview_mutex);
 
 	return 0;
 }
@@ -3041,23 +3097,26 @@ void exynos_camera_preview_stop(struct exynos_camera *exynos_camera)
 
 	ALOGD("%s()", __func__);
 
+	pthread_mutex_lock(&exynos_camera->preview_mutex);
+
 	if (!exynos_camera->preview_enabled) {
 		ALOGE("Preview was already stopped!");
+		pthread_mutex_unlock(&exynos_camera->preview_mutex);
 		return;
 	}
 
 	exynos_camera->preview_enabled = 0;
 
-	if (exynos_camera->capture_enabled) {
-		pthread_mutex_lock(&exynos_camera->capture_mutex);
+	// capture_stop() destroys capture_mutex, so it is not held around it
+	if (exynos_camera->capture_enabled)
 		exynos_camera_capture_stop(exynos_camera);
-		pthread_mutex_unlock(&exynos_camera->capture_mutex);
-	}
 
 	if (exynos_camera->preview_output_enabled)
 		exynos_camera_preview_output_stop(exynos_camera);
 
 	exynos_camera->preview_window = NULL;
+
+	pthread_mutex_unlock(&exynos_camera->preview_mutex);
 }
 
 // Picture
@@ -3449,13 +3508,17 @@ static int exynos_camera_m9mo_get_frame(struct exynos_camera *exynos_camera,
 
 static void exynos_camera_m9mo_save_raw(void *data, int size, char *path, size_t path_size)
 {
-	time_t now = time(NULL);
+	struct timespec ts;
 	struct tm tm;
+	size_t written;
 	FILE *file;
 
-	localtime_r(&now, &tm);
-	snprintf(path, path_size, M9MO_RAW_DIR "/IMG_%04d%02d%02d_%02d%02d%02d.raw",
-		tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+	// Milliseconds too: two shots in the same second must not overwrite
+	clock_gettime(CLOCK_REALTIME, &ts);
+	localtime_r(&ts.tv_sec, &tm);
+	snprintf(path, path_size, M9MO_RAW_DIR "/IMG_%04d%02d%02d_%02d%02d%02d_%03ld.raw",
+		tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
+		ts.tv_nsec / 1000000);
 
 	file = fopen(path, "wb");
 	if (file == NULL) {
@@ -3463,8 +3526,13 @@ static void exynos_camera_m9mo_save_raw(void *data, int size, char *path, size_t
 		path[0] = '\0';
 		return;
 	}
-	fwrite(data, 1, size, file);
-	fclose(file);
+	written = fwrite(data, 1, size, file);
+	if (fclose(file) != 0 || written != (size_t) size) {
+		ALOGE("%s: Unable to write %s (%zu of %d bytes)", __func__, path, written, size);
+		unlink(path);
+		path[0] = '\0';
+		return;
+	}
 
 	ALOGD("%s: %s, %d bytes", __func__, path, size);
 }
@@ -3510,20 +3578,25 @@ static void exynos_camera_m9mo_exif(struct exynos_camera *exynos_camera, const c
 		rc = exynos_v4l2_g_ctrl(exynos_camera, 0, ctrls[i].cid, &values[i]);
 		if (rc < 0)
 			ALOGE("%s: Unable to read %s", __func__, ctrls[i].key);
-		exynos_param_int_set(exynos_camera, (char *) ctrls[i].key, values[i]);
 	}
 
 	ALOGD("%s: ISO %d, TV %d, AV %d, BV %d, EBV %d, flash %d, FL %d, FL35 %d", __func__,
 		values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7]);
 
+	// set_parameters runs concurrently on HwBinder threads
+	pthread_mutex_lock(&exynos_camera->params_mutex);
+
+	for (i = 0; i < sizeof(ctrls) / sizeof(ctrls[0]); i++)
+		exynos_param_int_set(exynos_camera, (char *) ctrls[i].key, values[i]);
+
 	if (raw_path == NULL || raw_path[0] == '\0')
-		return;
+		goto unlock;
 
 	snprintf(path, sizeof(path), "%s.txt", raw_path);
 	file = fopen(path, "w");
 	if (file == NULL) {
 		ALOGE("%s: Unable to open %s", __func__, path);
-		return;
+		goto unlock;
 	}
 
 #define PARAM_STRING(key) ({ char *_s = exynos_param_string_get(exynos_camera, (char *) (key)); _s ? _s : ""; })
@@ -3540,6 +3613,9 @@ static void exynos_camera_m9mo_exif(struct exynos_camera *exynos_camera, const c
 #undef PARAM_STRING
 
 	fclose(file);
+
+unlock:
+	pthread_mutex_unlock(&exynos_camera->params_mutex);
 }
 
 void *exynos_camera_m9mo_picture(void *data)
@@ -3553,6 +3629,8 @@ void *exynos_camera_m9mo_picture(void *data)
 	int raw = property_get_bool("persist.vendor.camera.raw", 0);
 	char raw_path[128] = "";
 	int streaming = 0;
+	int exposed = 0;
+	int success = 0;
 	int length, size = 0;
 	int fd, rc, i;
 
@@ -3569,9 +3647,9 @@ void *exynos_camera_m9mo_picture(void *data)
 	 * SIGSEGV in the capture thread).
 	 */
 	if (exynos_camera->preview_enabled) {
-		exynos_camera->callback_lock = 1;
+		exynos_camera_callback_lock(exynos_camera);
 		exynos_camera_preview_stop(exynos_camera);
-		exynos_camera->callback_lock = 0;
+		exynos_camera_callback_unlock(exynos_camera);
 	}
 
 	// Free the preview buffers: the JPEG buffer needs most of FIMC0's memory
@@ -3645,6 +3723,7 @@ void *exynos_camera_m9mo_picture(void *data)
 		goto error;
 	}
 	streaming = 1;
+	exposed = 1;
 
 	if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_SHUTTER) && EXYNOS_CAMERA_CALLBACK_DEFINED(notify))
 		exynos_camera->callbacks.notify(CAMERA_MSG_SHUTTER, 0, 0, exynos_camera->callbacks.user);
@@ -3666,11 +3745,16 @@ void *exynos_camera_m9mo_picture(void *data)
 
 			exynos_camera_m9mo_save_raw(buffer->data, size, raw_path, sizeof(raw_path));
 
+			// Sent to the app once the capture is done, see below
 			if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_RAW_IMAGE) && EXYNOS_CAMERA_CALLBACK_DEFINED(data)) {
 				raw_memory = exynos_camera->callbacks.request_memory(-1, size, 1, exynos_camera->callbacks.user);
 				if (raw_memory != NULL && raw_memory->data != NULL && raw_memory->data != MAP_FAILED) {
 					memcpy(raw_memory->data, buffer->data, size);
-					exynos_camera->callbacks.data(CAMERA_MSG_RAW_IMAGE, raw_memory, 0, NULL, exynos_camera->callbacks.user);
+				} else {
+					ALOGE("%s: Unable to request memory for the RAW frame", __func__);
+					if (raw_memory != NULL && raw_memory->release != NULL)
+						raw_memory->release(raw_memory);
+					raw_memory = NULL;
 				}
 			}
 		}
@@ -3710,22 +3794,29 @@ void *exynos_camera_m9mo_picture(void *data)
 	jpeg = exynos_camera->callbacks.request_memory(-1, size, 1, exynos_camera->callbacks.user);
 	if (jpeg == NULL || jpeg->data == NULL || jpeg->data == MAP_FAILED) {
 		ALOGE("%s: Unable to request memory", __func__);
+		if (jpeg != NULL && jpeg->release != NULL)
+			jpeg->release(jpeg);
 		jpeg = NULL;
 		goto error;
 	}
 
 	memcpy(jpeg->data, buffer->data, size);
-
-	if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_COMPRESSED_IMAGE) && EXYNOS_CAMERA_CALLBACK_DEFINED(data))
-		exynos_camera->callbacks.data(CAMERA_MSG_COMPRESSED_IMAGE, jpeg, 0, NULL, exynos_camera->callbacks.user);
-
+	success = 1;
 	goto complete;
 
 error:
-	if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_ERROR) && EXYNOS_CAMERA_CALLBACK_DEFINED(notify))
-		exynos_camera->callbacks.notify(CAMERA_MSG_ERROR, -1, 0, exynos_camera->callbacks.user);
+	// Exposed but not read out cleanly: the ISP may stay in still capture
+	// (in RAW mode with CAPPARM 0x78 set), so power-cycle it before the
+	// next preview
+	if (exposed)
+		exynos_camera->isp_reset_pending = 1;
 
 complete:
+	/*
+	 * Clean up before any callback: the app restarts the preview from its
+	 * picture callback, and that must find FIMC free and the ISP back in
+	 * single shot mode.
+	 */
 	if (streaming)
 		exynos_v4l2_streamoff_cap(exynos_camera, 0);
 
@@ -3734,17 +3825,36 @@ complete:
 
 	exynos_v4l2_reqbufs_cap(exynos_camera, 0, 0);
 
+	// The driver keeps running_capture_mode: go back to single shots
+	if (raw)
+		exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_CAPTURE_MODE, RUNNING_MODE_SINGLE);
+
+	// Parameters set during the capture were only stored: apply them now
+	pthread_mutex_lock(&exynos_camera->params_mutex);
+	if (exynos_camera->params_pending) {
+		exynos_camera->params_pending = 0;
+		if (exynos_camera_params_apply(exynos_camera, 0) < 0)
+			ALOGE("%s: Unable to apply the parameters set during the capture", __func__);
+	}
+	pthread_mutex_unlock(&exynos_camera->params_mutex);
+
+	exynos_camera->picture_enabled = 0;
+
+	if (success) {
+		if (raw_memory != NULL && EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_RAW_IMAGE) && EXYNOS_CAMERA_CALLBACK_DEFINED(data))
+			exynos_camera->callbacks.data(CAMERA_MSG_RAW_IMAGE, raw_memory, 0, NULL, exynos_camera->callbacks.user);
+
+		if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_COMPRESSED_IMAGE) && EXYNOS_CAMERA_CALLBACK_DEFINED(data))
+			exynos_camera->callbacks.data(CAMERA_MSG_COMPRESSED_IMAGE, jpeg, 0, NULL, exynos_camera->callbacks.user);
+	} else if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_ERROR) && EXYNOS_CAMERA_CALLBACK_DEFINED(notify)) {
+		exynos_camera->callbacks.notify(CAMERA_MSG_ERROR, -1, 0, exynos_camera->callbacks.user);
+	}
+
 	if (jpeg != NULL && jpeg->release != NULL)
 		jpeg->release(jpeg);
 
 	if (raw_memory != NULL && raw_memory->release != NULL)
 		raw_memory->release(raw_memory);
-
-	// The driver keeps running_capture_mode: go back to single shots
-	if (raw)
-		exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_CAPTURE_MODE, RUNNING_MODE_SINGLE);
-
-	exynos_camera->picture_enabled = 0;
 
 	return NULL;
 }
@@ -3759,38 +3869,51 @@ int exynos_camera_picture_start(struct exynos_camera *exynos_camera)
 
 	ALOGD("%s()", __func__);
 
-	if (exynos_camera->picture_enabled) {
-		ALOGE("Picture was already started!");
-		return 0;
-	}
-
 #ifdef EXYNOS_M9MO
 	{
 		// The M9MO takes stills in a separate FIMC session, not from an
 		// interleaved preview stream like the S5C73M3 code below
-		pthread_t thread;
-		pthread_attr_t attr;
+
+		// One capture at a time: a second request would never get its own
+		// picture callback
+		if (exynos_camera->picture_enabled) {
+			ALOGE("%s: A picture is already being taken", __func__);
+			return -EBUSY;
+		}
 
 		if (exynos_v4l2_fd(exynos_camera, 0) < 0) {
 			ALOGE("%s: The camera is not started", __func__);
 			return -1;
 		}
 
+		// A running auto-focus would poll the ISP during the capture
+		if (exynos_camera->auto_focus_enabled)
+			exynos_camera_auto_focus_thread_stop(exynos_camera);
+
+		// Reap the previous picture thread (it has finished by now)
+		if (exynos_camera->m9mo_picture_thread_valid) {
+			pthread_join(exynos_camera->m9mo_picture_thread, NULL);
+			exynos_camera->m9mo_picture_thread_valid = 0;
+		}
+
 		exynos_camera->picture_enabled = 1;
 
-		pthread_attr_init(&attr);
-		pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-		rc = pthread_create(&thread, &attr, exynos_camera_m9mo_picture, exynos_camera);
-		pthread_attr_destroy(&attr);
+		rc = pthread_create(&exynos_camera->m9mo_picture_thread, NULL, exynos_camera_m9mo_picture, exynos_camera);
 		if (rc != 0) {
 			ALOGE("%s: Unable to create the picture thread", __func__);
 			exynos_camera->picture_enabled = 0;
 			return -1;
 		}
+		exynos_camera->m9mo_picture_thread_valid = 1;
 
 		return 0;
 	}
 #endif
+
+	if (exynos_camera->picture_enabled) {
+		ALOGE("Picture was already started!");
+		return 0;
+	}
 
 	if (!exynos_camera->camera_fimc_is) {
 		rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_CAPTURE, 0);
@@ -3825,6 +3948,16 @@ void exynos_camera_picture_stop(struct exynos_camera *exynos_camera)
 		ALOGE("Picture was already stopped!");
 		return;
 	}
+
+#ifdef EXYNOS_M9MO
+	/*
+	 * An M9MO exposure cannot be aborted: the picture thread finishes it,
+	 * cleans up and clears picture_enabled itself. Clearing it here would
+	 * let a new capture start on top of the running one, and the AE/AWB
+	 * write below would reach the ISP mid-capture.
+	 */
+	return;
+#endif
 
 	memory = exynos_camera->picture_memory;
 
@@ -4576,9 +4709,9 @@ int exynos_camera_start_preview(struct camera_device *dev)
 	exynos_camera = (struct exynos_camera *) dev->priv;
 	usleep(100);
 
-	exynos_camera->callback_lock = 1;
+	exynos_camera_callback_lock(exynos_camera);
 	rc = exynos_camera_preview_start(exynos_camera);
-	exynos_camera->callback_lock = 0;
+	exynos_camera_callback_unlock(exynos_camera);
 
 	return rc;
 }
@@ -4594,9 +4727,9 @@ void exynos_camera_stop_preview(struct camera_device *dev)
 
 	exynos_camera = (struct exynos_camera *) dev->priv;
 
-	exynos_camera->callback_lock = 1;
+	exynos_camera_callback_lock(exynos_camera);
 	exynos_camera_preview_stop(exynos_camera);
-	exynos_camera->callback_lock = 0;
+	exynos_camera_callback_unlock(exynos_camera);
 }
 
 int exynos_camera_preview_enabled(struct camera_device *dev)
@@ -4642,9 +4775,9 @@ int exynos_camera_start_recording(struct camera_device *dev)
 
 	exynos_camera = (struct exynos_camera *) dev->priv;
 
-	exynos_camera->callback_lock = 1;
+	exynos_camera_callback_lock(exynos_camera);
 	rc = exynos_camera_recording_start(exynos_camera);
-	exynos_camera->callback_lock = 0;
+	exynos_camera_callback_unlock(exynos_camera);
 
 	return rc;
 }
@@ -4657,9 +4790,9 @@ void exynos_camera_stop_recording(struct camera_device *dev)
 
 	exynos_camera = (struct exynos_camera *) dev->priv;
 
-	exynos_camera->callback_lock = 1;
+	exynos_camera_callback_lock(exynos_camera);
 	exynos_camera_recording_stop(exynos_camera);
-	exynos_camera->callback_lock = 0;
+	exynos_camera_callback_unlock(exynos_camera);
 }
 
 int exynos_camera_recording_enabled(struct camera_device *dev)
@@ -4738,9 +4871,9 @@ int exynos_camera_take_picture(struct camera_device *dev)
 
 	exynos_camera = (struct exynos_camera *) dev->priv;
 
-	exynos_camera->callback_lock = 1;
+	exynos_camera_callback_lock(exynos_camera);
 	rc = exynos_camera_picture_start(exynos_camera);
-	exynos_camera->callback_lock = 0;
+	exynos_camera_callback_unlock(exynos_camera);
 
 	return rc;
 }
@@ -4757,9 +4890,9 @@ int exynos_camera_cancel_picture(struct camera_device *dev)
 
 	exynos_camera = (struct exynos_camera *) dev->priv;
 
-	exynos_camera->callback_lock = 1;
+	exynos_camera_callback_lock(exynos_camera);
 	exynos_camera_picture_stop(exynos_camera);
-	exynos_camera->callback_lock = 0;
+	exynos_camera_callback_unlock(exynos_camera);
 
 	return 0;
 }
@@ -4770,12 +4903,15 @@ int exynos_camera_set_parameters(struct camera_device *dev,
 	struct exynos_camera *exynos_camera;
 	int rc;
 
-	ALOGD("%s(%p, %s)", __func__, dev, params);
+	// The whole string (~3 KB) on every call is too much for the log
+	ALOGV("%s(%p, %s)", __func__, dev, params);
 
 	if (dev == NULL || dev->priv == NULL || params == NULL)
 		return -EINVAL;
 
 	exynos_camera = (struct exynos_camera *) dev->priv;
+
+	pthread_mutex_lock(&exynos_camera->params_mutex);
 
 	if (strstr(params, "gps-timestamp=") == NULL) {
 		/* Make sure the GPS data is ignored, it may have
@@ -4789,16 +4925,32 @@ int exynos_camera_set_parameters(struct camera_device *dev,
 	rc = exynos_params_string_set(exynos_camera, (char *) params);
 	if (rc < 0) {
 		ALOGE("%s: Unable to set params string", __func__);
-		return -1;
+		rc = -1;
+		goto unlock;
+	}
+
+	/*
+	 * No ISP writes during a capture (zoom, exposure... mid-exposure): the
+	 * picture thread applies the parameters once it is done.
+	 */
+	if (exynos_camera->picture_enabled) {
+		exynos_camera->params_pending = 1;
+		rc = 0;
+		goto unlock;
 	}
 
 	rc = exynos_camera_params_apply(exynos_camera, 0);
 	if (rc < 0) {
 		ALOGE("%s: Unable to apply params", __func__);
-		return -1;
+		rc = -1;
+		goto unlock;
 	}
 
-	return 0;
+	rc = 0;
+
+unlock:
+	pthread_mutex_unlock(&exynos_camera->params_mutex);
+	return rc;
 }
 
 #ifdef EXYNOS_M9MO
@@ -4811,7 +4963,8 @@ int exynos_camera_set_parameters(struct camera_device *dev,
  */
 static void exynos_camera_m9mo_flash_status(struct exynos_camera *exynos_camera)
 {
-	static int last = -1;
+	struct timespec now;
+	long long now_ms;
 	int value = 0;
 	int rc;
 
@@ -4819,13 +4972,20 @@ static void exynos_camera_m9mo_flash_status(struct exynos_camera *exynos_camera)
 	if (exynos_v4l2_fd(exynos_camera, 0) < 0 || exynos_camera->picture_enabled)
 		return;
 
+	// Apps call get_parameters often: one I2C read per 500 ms is plenty
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	now_ms = (long long) now.tv_sec * 1000 + now.tv_nsec / 1000000;
+	if (exynos_camera->flash_status_time != 0 && now_ms - exynos_camera->flash_status_time < 500)
+		return;
+	exynos_camera->flash_status_time = now_ms;
+
 	rc = exynos_v4l2_g_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_FLASH_MODE, &value);
 	if (rc < 0)
 		return;
 
-	if (value != last) {
+	if (value != exynos_camera->flash_status) {
 		ALOGD("%s: strobe charge %d, up/down %d", __func__, value & 0xff, (value >> 8) & 0xff);
-		last = value;
+		exynos_camera->flash_status = value;
 	}
 
 	exynos_param_string_set(exynos_camera, "flash-popup", ((value >> 8) & 0xff) ? "up" : "down");
@@ -4838,18 +4998,23 @@ char *exynos_camera_get_parameters(struct camera_device *dev)
 	struct exynos_camera *exynos_camera;
 	char *params;
 
-	ALOGD("%s(%p)", __func__, dev);
+	ALOGV("%s(%p)", __func__, dev);
 
 	if (dev == NULL || dev->priv == NULL)
 		return NULL;
 
 	exynos_camera = (struct exynos_camera *) dev->priv;
 
+	pthread_mutex_lock(&exynos_camera->params_mutex);
+
 #ifdef EXYNOS_M9MO
 	exynos_camera_m9mo_flash_status(exynos_camera);
 #endif
 
 	params = exynos_params_string_get(exynos_camera);
+
+	pthread_mutex_unlock(&exynos_camera->params_mutex);
+
 	if (params == NULL) {
 		ALOGE("%s: Couldn't find any param", __func__);
 		return strdup("");
@@ -4860,7 +5025,7 @@ char *exynos_camera_get_parameters(struct camera_device *dev)
 
 void exynos_camera_put_parameters(struct camera_device *dev, char *params)
 {
-	ALOGD("%s(%p)", __func__, dev);
+	ALOGV("%s(%p)", __func__, dev);
 
 	if (params != NULL)
 		free(params);
@@ -4927,6 +5092,29 @@ int exynos_camera_send_command(struct camera_device *dev,
 	return 0;
 }
 
+/*
+ * Stop every HAL thread before the camera goes away. HIDL's CameraDevice
+ * closes the device without calling release() first, so close() must do
+ * this too: the picture, auto-focus and capture threads all use the
+ * exynos_camera struct that close() frees.
+ */
+static void exynos_camera_quiesce(struct exynos_camera *exynos_camera)
+{
+	if (exynos_camera->auto_focus_enabled)
+		exynos_camera_auto_focus_thread_stop(exynos_camera);
+
+	if (exynos_camera->m9mo_picture_thread_valid) {
+		pthread_join(exynos_camera->m9mo_picture_thread, NULL);
+		exynos_camera->m9mo_picture_thread_valid = 0;
+	}
+
+	if (exynos_camera->preview_enabled) {
+		exynos_camera_callback_lock(exynos_camera);
+		exynos_camera_preview_stop(exynos_camera);
+		exynos_camera_callback_unlock(exynos_camera);
+	}
+}
+
 void exynos_camera_release(struct camera_device *dev)
 {
 	struct exynos_camera *exynos_camera;
@@ -4938,7 +5126,7 @@ void exynos_camera_release(struct camera_device *dev)
 
 	exynos_camera = (struct exynos_camera *) dev->priv;
 
-	exynos_camera_capture_thread_stop(exynos_camera);
+	exynos_camera_quiesce(exynos_camera);
 
 	exynos_camera_stop(exynos_camera);
 }
@@ -4993,8 +5181,16 @@ int exynos_camera_close(hw_device_t *device)
 	camera_device = (struct camera_device *) device;
 
 	if (camera_device->priv != NULL) {
-		exynos_camera_stop(camera_device->priv);
-		free(camera_device->priv);
+		struct exynos_camera *exynos_camera = camera_device->priv;
+
+		exynos_camera_quiesce(exynos_camera);
+		exynos_camera_stop(exynos_camera);
+
+		exynos_params_free(exynos_camera);
+		pthread_mutex_destroy(&exynos_camera->params_mutex);
+		pthread_mutex_destroy(&exynos_camera->preview_mutex);
+
+		free(exynos_camera);
 	}
 
 	free(camera_device);
@@ -5025,6 +5221,8 @@ int exynos_camera_open(const struct hw_module_t* module, const char *camera_id,
 		return -EINVAL;
 
 	exynos_camera = calloc(1, sizeof(struct exynos_camera));
+	if (exynos_camera == NULL)
+		return -ENOMEM;
 	exynos_camera->config = exynos_camera_config;
 
 	if (exynos_camera->config->v4l2_nodes_count > EXYNOS_CAMERA_MAX_V4L2_NODES_COUNT)
@@ -5054,6 +5252,9 @@ int exynos_camera_open(const struct hw_module_t* module, const char *camera_id,
 
 error:
 	exynos_camera_stop(exynos_camera);
+	exynos_params_free(exynos_camera);
+	pthread_mutex_destroy(&exynos_camera->params_mutex);
+	pthread_mutex_destroy(&exynos_camera->preview_mutex);
 
 error_device:
 	if (camera_device != NULL)

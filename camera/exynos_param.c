@@ -27,6 +27,9 @@
 
 #include "exynos_camera.h"
 
+struct exynos_param *exynos_param_find_key(struct exynos_camera *exynos_camera,
+	char *key);
+
 int exynos_param_register(struct exynos_camera *exynos_camera, char *key,
 	union exynos_param_data data, enum exynos_param_type type)
 {
@@ -99,6 +102,8 @@ void exynos_param_unregister(struct exynos_camera *exynos_camera,
 
 			if (param->type == EXYNOS_PARAM_STRING && param->data.string != NULL)
 				free(param->data.string);
+			if (param->key != NULL)
+				free(param->key);
 
 			memset(param, 0, sizeof(struct exynos_param));
 			free(param);
@@ -109,6 +114,64 @@ void exynos_param_unregister(struct exynos_camera *exynos_camera,
 list_continue:
 		list = list->next;
 	}
+}
+
+/*
+ * A param's value as text, whatever type exynos_params_string_set() inferred
+ * for it: "16" comes back as an int and "0.5" as a float, where a plain
+ * string get would fail. Returns 0, or -1 if the key is missing.
+ */
+int exynos_param_value_string(struct exynos_camera *exynos_camera, char *key,
+	char *buffer, size_t size)
+{
+	struct exynos_param *param;
+
+	param = exynos_param_find_key(exynos_camera, key);
+	if (param == NULL || buffer == NULL || size == 0)
+		return -1;
+
+	switch (param->type) {
+		case EXYNOS_PARAM_INT:
+			snprintf(buffer, size, "%d", param->data.integer);
+			return 0;
+		case EXYNOS_PARAM_FLOAT:
+			snprintf(buffer, size, "%g", param->data.floating);
+			return 0;
+		case EXYNOS_PARAM_STRING:
+			if (param->data.string == NULL)
+				return -1;
+			snprintf(buffer, size, "%s", param->data.string);
+			return 0;
+		default:
+			return -1;
+	}
+}
+
+// Free the whole param list (camera close): ~80 nodes and their strings
+void exynos_params_free(struct exynos_camera *exynos_camera)
+{
+	struct exynos_param *param;
+	struct list_head *list;
+	struct list_head *next;
+
+	if (exynos_camera == NULL)
+		return;
+
+	list = (struct list_head *) exynos_camera->params;
+	while (list != NULL) {
+		next = list->next;
+		param = (struct exynos_param *) list;
+
+		if (param->type == EXYNOS_PARAM_STRING && param->data.string != NULL)
+			free(param->data.string);
+		if (param->key != NULL)
+			free(param->key);
+		free(param);
+
+		list = next;
+	}
+
+	exynos_camera->params = NULL;
 }
 
 struct exynos_param *exynos_param_find_key(struct exynos_camera *exynos_camera,

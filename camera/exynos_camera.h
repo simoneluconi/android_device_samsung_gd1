@@ -312,10 +312,22 @@ struct exynos_camera {
 
 	struct exynox_camera_config *config;
 	struct exynos_param *params;
+	// Guards the param list: set/get_parameters run on HwBinder threads
+	// while the picture thread reads and writes params (recursive)
+	pthread_mutex_t params_mutex;
+	// set_parameters during a capture: applied once the capture is done
+	int params_pending;
 
 	struct exynos_camera_callbacks callbacks;
+	// Non-zero while a HwBinder call is in the HAL: HAL threads skip their
+	// callbacks into the framework meanwhile (CameraService holds its own
+	// lock across those calls). A counter, changed atomically.
 	int callback_lock;
 	int messages_enabled;
+
+	// Serializes preview start/stop between HwBinder calls and the M9MO
+	// picture thread
+	pthread_mutex_t preview_mutex;
 
 	gralloc_module_t *gralloc;
 
@@ -354,6 +366,16 @@ struct exynos_camera {
 	pthread_t picture_thread;
 	int picture_running;
 	int picture_enabled;
+	// The M9MO picture thread, joinable: close() and the next picture wait
+	// for it
+	pthread_t m9mo_picture_thread;
+	int m9mo_picture_thread_valid;
+	// The ISP was left in still capture by a failed shot: power-cycle it at
+	// the next preview start
+	int isp_reset_pending;
+	// Last flash state read from the ISP (get_parameters), and when
+	int flash_status;
+	long long flash_status_time;
 
 	int picture_completed;
 	camera_memory_t *picture_memory;
@@ -567,6 +589,9 @@ int exynos_param_string_set(struct exynos_camera *exynos_camera,
 	char *key, char *string);
 char *exynos_params_string_get(struct exynos_camera *exynos_camera);
 int exynos_params_string_set(struct exynos_camera *exynos_camera, char *string);
+void exynos_params_free(struct exynos_camera *exynos_camera);
+int exynos_param_value_string(struct exynos_camera *exynos_camera, char *key,
+	char *buffer, size_t size);
 
 /*
  * Utils
