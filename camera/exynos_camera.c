@@ -998,6 +998,11 @@ int exynos_camera_params_init(struct exynos_camera *exynos_camera, int id)
 	exynos_camera->capture_mode = RUNNING_MODE_SINGLE;
 	exynos_camera->bracket_ev = BRACKET_AEB_VALUE3;
 
+	// Per-shot RAW, see exynos_camera_m9mo_picture()
+	exynos_param_string_set(exynos_camera, "raw-capture", "off");
+	exynos_param_string_set(exynos_camera, "raw-capture-values", "off,on");
+	exynos_camera->raw_capture = 0;
+
 	// AF window and readouts, see exynos_camera_params_apply() and
 	// exynos_camera_m9mo_af_status()
 	exynos_param_string_set(exynos_camera, "af-area", "center");
@@ -1967,6 +1972,14 @@ pasm_mode:
 		exynos_camera->capture_mode = capture_mode;
 		exynos_param_int_set(exynos_camera, "num-snaps-per-shutter",
 			capture_mode == RUNNING_MODE_SINGLE ? 1 : 3);
+
+		// raw-capture: on for the raw frame with the next single shot
+		{
+			char *raw_capture_string = exynos_param_string_get(exynos_camera, "raw-capture");
+
+			exynos_camera->raw_capture = raw_capture_string != NULL &&
+				strcmp(raw_capture_string, "on") == 0;
+		}
 
 		// Parsed as an int or a float ("2", "1.0"), and printed back with
 		// %g: compare as numbers
@@ -3882,7 +3895,13 @@ void *exynos_camera_m9mo_picture(void *data)
 	int height = exynos_camera->picture_height;
 	int capture_mode = exynos_camera->capture_mode;
 	int bracket = capture_mode == RUNNING_MODE_AE_BRACKET || capture_mode == RUNNING_MODE_HDR;
-	int raw = !bracket && property_get_bool("persist.vendor.camera.raw", 0);
+	/*
+	 * RAW with raw-capture=on (per shot, from the app) or with the bring-up
+	 * property, which also keeps the frame and its .txt in M9MO_RAW_DIR.
+	 * Brackets take no raw frame.
+	 */
+	int raw_bringup = property_get_bool("persist.vendor.camera.raw", 0);
+	int raw = !bracket && (exynos_camera->raw_capture || raw_bringup);
 	char raw_path[128] = "";
 	int streaming = 0;
 	int exposed = 0;
@@ -4013,7 +4032,8 @@ void *exynos_camera_m9mo_picture(void *data)
 				size = length;
 			}
 
-			exynos_camera_m9mo_save_raw(buffer->data, size, raw_path, sizeof(raw_path));
+			if (raw_bringup)
+				exynos_camera_m9mo_save_raw(buffer->data, size, raw_path, sizeof(raw_path));
 
 			// Sent to the app once the capture is done, see below
 			if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_RAW_IMAGE) && EXYNOS_CAMERA_CALLBACK_DEFINED(data)) {

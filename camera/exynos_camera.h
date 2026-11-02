@@ -402,6 +402,8 @@ struct exynos_camera {
 	// bracket step (BRACKET_AEB_VALUE1-6), read by the picture thread
 	int capture_mode;
 	int bracket_ev;
+	// raw-capture=on: the next shot also delivers the raw frame
+	int raw_capture;
 
 	int picture_completed;
 	camera_memory_t *picture_memory;
