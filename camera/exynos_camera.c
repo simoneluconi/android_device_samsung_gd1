@@ -168,9 +168,11 @@ struct exynos_camera_preset exynos_camera_presets_smdk4x12[] = {
 			.focus_mode = "auto",
 			.focus_mode_values = "auto,infinity,macro",
 			.focus_distances = "0.10,1.20,Infinity",
-			.focus_areas = NULL,
-			.max_num_focus_areas = 0,
+			// One touch point (OBJECT_POSITION_X/Y), see af-area for the rest
+			.focus_areas = "(0,0,0,0,0)",
+			.max_num_focus_areas = 1,
 
+			// The ISP detects faces (af-area=face) but reports no positions
 			.max_detected_faces = 0,
 
 			.zoom_supported = 1,
@@ -776,6 +778,13 @@ void exynos_camera_stop(struct exynos_camera *exynos_camera)
 // Frames per bracket shot (the ISP's AE bracket and HDR modes take three)
 #define M9MO_BRACKET_FRAMES	3
 
+// af-area, the AF window when no touch point is set (see params_apply)
+#define M9MO_AF_AREA_CENTER	0
+#define M9MO_AF_AREA_MULTI	1
+#define M9MO_AF_AREA_FACE	2
+// The ISP wants the touch point at least this far from the preview's edges
+#define M9MO_TOUCH_AF_MARGIN	40
+
 // 1-based position of value in a comma-separated list, -1 if absent
 static int exynos_camera_m9mo_list_index(const char *values, const char *value)
 {
@@ -988,6 +997,17 @@ int exynos_camera_params_init(struct exynos_camera *exynos_camera, int id)
 	exynos_param_int_set(exynos_camera, "num-snaps-per-shutter", 1);
 	exynos_camera->capture_mode = RUNNING_MODE_SINGLE;
 	exynos_camera->bracket_ev = BRACKET_AEB_VALUE3;
+
+	// AF window and readouts, see exynos_camera_params_apply() and
+	// exynos_camera_m9mo_af_status()
+	exynos_param_string_set(exynos_camera, "af-area", "center");
+	exynos_param_string_set(exynos_camera, "af-area-values", "center,multi,face");
+	exynos_param_string_set(exynos_camera, "af-result-area", "0,0,0,0");
+	exynos_param_int_set(exynos_camera, "face-count", 0);
+	exynos_param_int_set(exynos_camera, "af-result-raw", 0);
+	exynos_camera->af_area = -1;
+	exynos_camera->af_focus_range = -1;
+	exynos_camera->af_result_raw = 0;
 #endif
 
 	// AE lock
@@ -1447,6 +1467,12 @@ int exynos_camera_params_apply(struct exynos_camera *exynos_camera, int force)
 			if (! ( (focus_x == (preview_width / 2)) && (focus_y == (preview_height / 2)) )) {
 				//ALOGV("%s focus_mode changed to %d due to focus-areas='%s'", __func__, focus_mode, focus_areas_string);
 				focus_mode = FOCUS_MODE_TOUCH;
+#ifdef EXYNOS_M9MO
+				exynos_camera->focus_area_left = focus_left;
+				exynos_camera->focus_area_top = focus_top;
+				exynos_camera->focus_area_right = focus_right;
+				exynos_camera->focus_area_bottom = focus_bottom;
+#endif
 			}
 		}
 
@@ -1960,6 +1986,56 @@ pasm_mode:
 				ALOGE("%s: Unknown bracket-ev %s", __func__, bracket_ev_value);
 		}
 	}
+
+	/*
+	 * af-area, the AF window when focus-areas holds no touch point: center,
+	 * multi or face. The ISP takes the window only at AF start, from the
+	 * focus mode stored then (m9mo_set_af_sensor_mode(): AUTO and MACRO use
+	 * FOCUS_AREA_MODE, 0 = centre and 1 = multi; MULTI is window 1;
+	 * FACEDETECT and TOUCH are window 2, the position-based one), so the
+	 * focus mode is chosen in exynos_camera_m9mo_auto_focus_mode().
+	 * Face detection only turns on with FACE_DETECTION_NORMAL:
+	 * m9mo_set_facedetect() takes any other value, FACE_DETECTION_ON
+	 * included, as off. Sent again on force: the ISP only powers up with
+	 * the preview.
+	 */
+	{
+		char *af_area_string = exynos_param_string_get(exynos_camera, "af-area");
+		int af_area = -1;
+
+		if (af_area_string != NULL) {
+			if (strcmp(af_area_string, "center") == 0)
+				af_area = M9MO_AF_AREA_CENTER;
+			else if (strcmp(af_area_string, "multi") == 0)
+				af_area = M9MO_AF_AREA_MULTI;
+			else if (strcmp(af_area_string, "face") == 0)
+				af_area = M9MO_AF_AREA_FACE;
+			else
+				ALOGE("%s: Unknown af-area %s", __func__, af_area_string);
+		}
+
+		if (af_area >= 0 && (af_area != exynos_camera->af_area || force)) {
+			if (af_area == M9MO_AF_AREA_FACE || exynos_camera->af_area == M9MO_AF_AREA_FACE || force) {
+				rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_FACE_DETECTION,
+					af_area == M9MO_AF_AREA_FACE ? FACE_DETECTION_NORMAL : FACE_DETECTION_OFF);
+				if (rc < 0)
+					ALOGE("%s: Unable to set the face detection", __func__);
+			}
+
+			if (af_area != M9MO_AF_AREA_FACE) {
+				rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_FOCUS_AREA_MODE,
+					af_area == M9MO_AF_AREA_MULTI ? V4L2_FOCUS_AREA_MULTI : V4L2_FOCUS_AREA_CENTER);
+				if (rc < 0)
+					ALOGE("%s: Unable to set the focus area mode", __func__);
+			}
+
+			exynos_camera->af_area = af_area;
+		}
+	}
+
+	// The ISP's focus range state may be new: send it again at AF start
+	if (force)
+		exynos_camera->af_focus_range = -1;
 #endif
 
 	// Image stabilization (Anti-shake)
@@ -4654,6 +4730,79 @@ void exynos_camera_auto_focus_stop(struct exynos_camera *exynos_camera)
  */
 #define M9MO_AUTO_FOCUS_IN_PROGRESS	0x1000
 #define M9MO_AUTO_FOCUS_FAIL		0
+
+/*
+ * Choose the focus mode right before SET_AUTO_FOCUS starts the AF: only
+ * then does the ISP read the stored mode and write its AF window (see
+ * af-area in exynos_camera_params_apply()). Sent at every AF, so whatever
+ * the last AF used never lingers:
+ * - a touch point (params_apply() set FOCUS_MODE_TOUCH): TOUCH, then
+ *   OBJECT_POSITION_X/Y, then TOUCH_AF_START_STOP, Samsung's order. The
+ *   positions are only stored; TOUCH_AF_START_STOP writes them to the ISP;
+ * - else af-area face: FACEDETECT;
+ * - else af-area multi: MULTI, or MACRO with the multi window
+ *   (FOCUS_AREA_MODE 1, set with af-area) when focus-mode is macro;
+ * - else focus-mode's own mode, with the centre window.
+ * AUTO, MULTI and TOUCH scan the driver's focus range, so it follows
+ * focus-mode (macro or auto); MACRO and FACEDETECT force their own.
+ * Called with params_mutex held.
+ */
+static void exynos_camera_m9mo_auto_focus_mode(struct exynos_camera *exynos_camera)
+{
+	int macro = strcmp(exynos_camera->raw_focus_mode, "macro") == 0;
+	int focus_mode = exynos_camera->focus_mode;
+	int focus_range = macro ? V4L2_FOCUS_RANGE_MACRO : V4L2_FOCUS_RANGE_AUTO;
+	int width = exynos_camera->preview_width;
+	int height = exynos_camera->preview_height;
+	int x, y;
+	int rc;
+
+	if (focus_mode != FOCUS_MODE_TOUCH) {
+		if (exynos_camera->af_area == M9MO_AF_AREA_FACE)
+			focus_mode = FOCUS_MODE_FACEDETECT;
+		else if (exynos_camera->af_area == M9MO_AF_AREA_MULTI && !macro)
+			focus_mode = FOCUS_MODE_MULTI;
+	}
+
+	if (focus_range != exynos_camera->af_focus_range) {
+		rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_FOCUS_RANGE, focus_range);
+		if (rc < 0)
+			ALOGE("%s: Unable to set the focus range", __func__);
+		else
+			exynos_camera->af_focus_range = focus_range;
+	}
+
+	rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_FOCUS_MODE, focus_mode);
+	if (rc < 0)
+		ALOGE("%s: Unable to set focus mode", __func__);
+
+	if (focus_mode != FOCUS_MODE_TOUCH)
+		return;
+
+	// In preview pixels, kept off the edges
+	x = exynos_camera->focus_x;
+	y = exynos_camera->focus_y;
+	if (x > width - M9MO_TOUCH_AF_MARGIN)
+		x = width - M9MO_TOUCH_AF_MARGIN;
+	if (x < M9MO_TOUCH_AF_MARGIN)
+		x = M9MO_TOUCH_AF_MARGIN;
+	if (y > height - M9MO_TOUCH_AF_MARGIN)
+		y = height - M9MO_TOUCH_AF_MARGIN;
+	if (y < M9MO_TOUCH_AF_MARGIN)
+		y = M9MO_TOUCH_AF_MARGIN;
+
+	ALOGD("%s: touch AF at %d,%d of %dx%d", __func__, x, y, width, height);
+
+	rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_OBJECT_POSITION_X, x);
+	if (rc < 0)
+		ALOGE("%s: Unable to set object x position", __func__);
+	rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_OBJECT_POSITION_Y, y);
+	if (rc < 0)
+		ALOGE("%s: Unable to set object y position", __func__);
+	rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_TOUCH_AF_START_STOP, TOUCH_AF_START);
+	if (rc < 0)
+		ALOGE("%s: Unable to start the touch AF", __func__);
+}
 #endif
 
 int exynos_camera_auto_focus(struct exynos_camera *exynos_camera, int auto_focus_status)
@@ -4718,6 +4867,11 @@ void *exynos_camera_auto_focus_thread(void *data)
 			ALOGE("%s: Unable to get auto-focus result", __func__);
 			    auto_focus_status = CAMERA_AF_STATUS_FAIL;
 		}
+#ifdef EXYNOS_M9MO
+		// For af-result-raw: get_parameters() must not read it again
+		else
+			exynos_camera->af_result_raw = auto_focus_status;
+#endif
 
 		rc = exynos_camera_auto_focus(exynos_camera, auto_focus_status);
 		if (rc < 0) {
@@ -4770,6 +4924,25 @@ int exynos_camera_auto_focus_thread_start(struct exynos_camera *exynos_camera)
 		ALOGE("Auto-focus thread was already started!");
 		return -1;
 	}
+
+#ifdef EXYNOS_M9MO
+	pthread_mutex_lock(&exynos_camera->params_mutex);
+
+	/*
+	 * No AF while zoom-action moves the lens: the focus would be for a
+	 * focal length that is already gone. Fail like any AF start; the app
+	 * focuses again once the lever is released.
+	 */
+	if (exynos_camera->zoom_action != V4L2_OPTICAL_ZOOM_STOP) {
+		pthread_mutex_unlock(&exynos_camera->params_mutex);
+		ALOGE("%s: The lens is zooming, no auto-focus", __func__);
+		return -1;
+	}
+
+	exynos_camera_m9mo_auto_focus_mode(exynos_camera);
+
+	pthread_mutex_unlock(&exynos_camera->params_mutex);
+#endif
 
 	pthread_mutex_init(&exynos_camera->auto_focus_mutex, NULL);
 
@@ -5389,10 +5562,73 @@ static void exynos_camera_m9mo_live_exposure(struct exynos_camera *exynos_camera
 #define Q16_TO_APEX100(q) ((int) (((long long) (q) * 100 + 32768) >> 16))
 	exynos_param_int_set(exynos_camera, "live-tv", Q16_TO_APEX100(values[0]));
 	exynos_param_int_set(exynos_camera, "live-av", Q16_TO_APEX100(values[1]));
-	exynos_param_int_set(exynos_camera, "live-bv", Q16_TO_APEX100((long long) values[1] + values[0] - values[2]));
 	exynos_param_int_set(exynos_camera, "live-iso", (int) (3.125 * pow(2.0, values[2] / 65536.0) + 0.5));
 	exynos_param_int_set(exynos_camera, "live-lv", values[3]);
+
+	/*
+	 * live-bv, the scene brightness for an exposure meter:
+	 * - outside M, Av + Tv - Sv of the "now" registers (1/100 EV);
+	 * - in M those registers hold the manual exposure, but LV still
+	 *   meters the scene (checked on 2026-11-02: room 8, lamp 11). LV is
+	 *   EV at ISO 100 in whole steps (it was 8 where P gave Bv 2.57), so
+	 *   Bv = LV - 5, at 1 EV resolution. LV reads 255 when too dark.
+	 * live-bv-source says which one: ae, lv, or none (too dark: live-bv
+	 * keeps its last value).
+	 */
+	if (exynos_camera->pasm_mode != MODE_M) {
+		exynos_param_int_set(exynos_camera, "live-bv", Q16_TO_APEX100((long long) values[1] + values[0] - values[2]));
+		exynos_param_string_set(exynos_camera, "live-bv-source", "ae");
+	} else if (values[3] >= 0 && values[3] < 255) {
+		exynos_param_int_set(exynos_camera, "live-bv", (values[3] - 5) * 100);
+		exynos_param_string_set(exynos_camera, "live-bv-source", "lv");
+	} else {
+		exynos_param_string_set(exynos_camera, "live-bv-source", "none");
+	}
 #undef Q16_TO_APEX100
+}
+
+/*
+ * AF readouts, at most every 250 ms with the preview running:
+ * - af-result-area: the touch area (-1000..1000, "l,t,r,b") while one is
+ *   set, else "0,0,0,0": with centre, multi and face the ISP does not say
+ *   where it focused;
+ * - face-count: how many faces the ISP sees (FACE_DETECT_NUMBER, one I2C
+ *   read), only with af-area=face, else 0. It gives no face positions;
+ * - af-result-raw: the last AUTO_FOCUS_RESULT word the AF thread read.
+ *   Never read here: that G_CTRL has side effects in the driver.
+ */
+static void exynos_camera_m9mo_af_status(struct exynos_camera *exynos_camera)
+{
+	char area[64];
+	long long now_ms;
+	int faces = 0;
+
+	if (exynos_v4l2_fd(exynos_camera, 0) < 0 || exynos_camera->picture_enabled ||
+		!exynos_camera->preview_enabled)
+		return;
+
+	now_ms = exynos_camera_m9mo_now_ms();
+	if (exynos_camera->af_status_time != 0 && now_ms - exynos_camera->af_status_time < 250)
+		return;
+	exynos_camera->af_status_time = now_ms;
+
+	if (exynos_camera->focus_mode == FOCUS_MODE_TOUCH)
+		snprintf(area, sizeof(area), "%d,%d,%d,%d", exynos_camera->focus_area_left,
+			exynos_camera->focus_area_top, exynos_camera->focus_area_right,
+			exynos_camera->focus_area_bottom);
+	else
+		snprintf(area, sizeof(area), "0,0,0,0");
+	exynos_param_string_set(exynos_camera, "af-result-area", area);
+
+	if (exynos_camera->af_area == M9MO_AF_AREA_FACE &&
+		exynos_v4l2_g_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_FACE_DETECT_NUMBER, &faces) < 0)
+		faces = 0;
+	// The driver returns an I2C error in the value itself
+	if (faces < 0)
+		faces = 0;
+	exynos_param_int_set(exynos_camera, "face-count", faces);
+
+	exynos_param_int_set(exynos_camera, "af-result-raw", exynos_camera->af_result_raw);
 }
 #endif
 
@@ -5414,6 +5650,7 @@ char *exynos_camera_get_parameters(struct camera_device *dev)
 	exynos_camera_m9mo_flash_status(exynos_camera);
 	exynos_camera_m9mo_zoom_status(exynos_camera);
 	exynos_camera_m9mo_live_exposure(exynos_camera);
+	exynos_camera_m9mo_af_status(exynos_camera);
 #endif
 
 	params = exynos_params_string_get(exynos_camera);

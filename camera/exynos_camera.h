@@ -384,6 +384,20 @@ struct exynos_camera {
 	long long zoom_settle_until;
 	// Live exposure readout (live-*), when last read
 	long long live_exposure_time;
+	// af-area (M9MO_AF_AREA_*), -1 until sent to the ISP
+	int af_area;
+	// The touch AF area (-1000..1000) while focus-areas holds one, for
+	// af-result-area
+	int focus_area_left;
+	int focus_area_top;
+	int focus_area_right;
+	int focus_area_bottom;
+	// V4L2_FOCUS_RANGE_* last sent at AF start, -1 to send it again
+	int af_focus_range;
+	// The last AUTO_FOCUS_RESULT word the AF thread read (af-result-raw),
+	// and when the af-* readouts were last updated
+	int af_result_raw;
+	long long af_status_time;
 	// capture-mode (RUNNING_MODE_SINGLE, _AE_BRACKET or _HDR) and the
 	// bracket step (BRACKET_AEB_VALUE1-6), read by the picture thread
 	int capture_mode;
