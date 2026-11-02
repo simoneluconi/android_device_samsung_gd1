@@ -61,6 +61,10 @@ on property:sys.boot_completed=1
 # its trigger after every sys.boot_completed action, the common one included.
 on property:vendor.gd1.boot_completed=1
     write /sys/devices/system/cpu/cpufreq/pegasusq/min_cpu_lock 0
+    # smdk4412-common's tweaks.rc sets the microSD read-ahead back to 128 KB
+    # at boot; the kernel default for SD cards (512 KB) reads files at the
+    # bus limit
+    write /sys/block/mmcblk1/queue/read_ahead_kb 512
 
     # KSM
     write /sys/kernel/mm/ksm/deferred_timer 1
