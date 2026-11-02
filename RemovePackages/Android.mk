@@ -75,6 +75,7 @@ LOCAL_OVERRIDES_PACKAGES := \
     MusicFX \
     NfcNci \
     ONS \
+    OpenCamera \
     PhotoTable \
     PrintRecommendationService \
     PrintSpooler \

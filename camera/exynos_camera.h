@@ -376,6 +376,18 @@ struct exynos_camera {
 	// Last flash state read from the ISP (get_parameters), and when
 	int flash_status;
 	long long flash_status_time;
+	// Continuous zoom (zoom-action): the running V4L2_OPTICAL_ZOOM_* value,
+	// when the zoom position was last read, and until when to keep reading
+	// it after a stop (the lens coasts to the next step)
+	int zoom_action;
+	long long zoom_status_time;
+	long long zoom_settle_until;
+	// Live exposure readout (live-*), when last read
+	long long live_exposure_time;
+	// capture-mode (RUNNING_MODE_SINGLE, _AE_BRACKET or _HDR) and the
+	// bracket step (BRACKET_AEB_VALUE1-6), read by the picture thread
+	int capture_mode;
+	int bracket_ev;
 
 	int picture_completed;
 	camera_memory_t *picture_memory;

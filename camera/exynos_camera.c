@@ -26,6 +26,7 @@
 #include <time.h>
 #include <errno.h>
 #include <malloc.h>
+#include <math.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/time.h>
@@ -769,9 +770,15 @@ void exynos_camera_stop(struct exynos_camera *exynos_camera)
 	"16,12,8,6,4,3,2,1.5,1,0.7,0.5,1/3,1/4,1/6,1/8,1/15,1/20,1/30,1/45,1/60," \
 	"1/90,1/125,1/180,1/250,1/350,1/500,1/750,1/1000,1/1500,1/2000"
 
-static int exynos_camera_m9mo_shutter_index(const char *value)
+// The AE bracket steps of m9mo_set_bracket_aeb() (BRACKET_AEB_VALUE1-6), in
+// EV, written as the float parameter prints them back (%g: "1", not "1.0")
+#define M9MO_BRACKET_EV_VALUES "0.3,0.6,1,1.3,1.6,2"
+// Frames per bracket shot (the ISP's AE bracket and HDR modes take three)
+#define M9MO_BRACKET_FRAMES	3
+
+// 1-based position of value in a comma-separated list, -1 if absent
+static int exynos_camera_m9mo_list_index(const char *values, const char *value)
 {
-	const char *values = M9MO_SHUTTER_SPEED_VALUES;
 	size_t length = strlen(value);
 	int index = 1;
 
@@ -787,8 +794,24 @@ static int exynos_camera_m9mo_shutter_index(const char *value)
 		index++;
 	}
 
-	ALOGE("%s: Unknown shutter speed %s", __func__, value);
 	return -1;
+}
+
+static int exynos_camera_m9mo_shutter_index(const char *value)
+{
+	int index = exynos_camera_m9mo_list_index(M9MO_SHUTTER_SPEED_VALUES, value);
+
+	if (index < 0)
+		ALOGE("%s: Unknown shutter speed %s", __func__, value);
+	return index;
+}
+
+static long long exynos_camera_m9mo_now_ms(void)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (long long) now.tv_sec * 1000 + now.tv_nsec / 1000000;
 }
 #endif
 
@@ -948,6 +971,23 @@ int exynos_camera_params_init(struct exynos_camera *exynos_camera, int id)
 	exynos_param_int_set(exynos_camera, "aperture", 28);
 	exynos_param_string_set(exynos_camera, "aperture-values", "28,32,35,40,45,50,56,63,71,80");
 	exynos_camera->pasm_mode = -1;
+
+	// Continuous zoom, metering and bracketing, see exynos_camera_params_apply()
+	exynos_param_string_set(exynos_camera, "zoom-action", "stop");
+	exynos_param_string_set(exynos_camera, "zoom-action-values", "tele-fast,tele-slow,wide-fast,wide-slow,stop");
+	exynos_camera->zoom_action = V4L2_OPTICAL_ZOOM_STOP;
+	exynos_param_string_set(exynos_camera, "metering", "matrix");
+	exynos_param_string_set(exynos_camera, "metering-values", "matrix,center,spot");
+	exynos_camera->metering = -1;
+	exynos_param_string_set(exynos_camera, "capture-mode", "single");
+	exynos_param_string_set(exynos_camera, "capture-mode-values", "single,ae-bracket,hdr");
+	// A float: apps send "1.0", which the parameter parser reads as one
+	exynos_param_float_set(exynos_camera, "bracket-ev", 1.0f);
+	exynos_param_string_set(exynos_camera, "bracket-ev-values", M9MO_BRACKET_EV_VALUES);
+	exynos_param_int_set(exynos_camera, "bracket-frames", M9MO_BRACKET_FRAMES);
+	exynos_param_int_set(exynos_camera, "num-snaps-per-shutter", 1);
+	exynos_camera->capture_mode = RUNNING_MODE_SINGLE;
+	exynos_camera->bracket_ev = BRACKET_AEB_VALUE3;
 #endif
 
 	// AE lock
@@ -1415,6 +1455,45 @@ int exynos_camera_params_apply(struct exynos_camera *exynos_camera, int force)
 	// Zoom
 
 	zoom_supported_string = exynos_param_string_get(exynos_camera, "zoom-supported");
+#ifdef EXYNOS_M9MO
+	/*
+	 * Continuous zoom for the lever: zoom-action starts the lens moving
+	 * (tele/wide, fast/slow) or stops it (m9mo_set_zoom_ctrl()), and
+	 * get_parameters() reports the position in zoom while it moves. While
+	 * it moves and for a short while after a stop, the zoom an app sends
+	 * back is its last reading, not a request: keep the ISP's position
+	 * instead of stepping the lens back to it.
+	 */
+	{
+		char *zoom_action_string = exynos_param_string_get(exynos_camera, "zoom-action");
+		int zoom_action = V4L2_OPTICAL_ZOOM_STOP;
+
+		if (zoom_action_string != NULL) {
+			if (strcmp(zoom_action_string, "tele-fast") == 0)
+				zoom_action = V4L2_OPTICAL_ZOOM_TELE_START;
+			else if (strcmp(zoom_action_string, "tele-slow") == 0)
+				zoom_action = V4L2_OPTICAL_ZOOM_SLOW_TELE_START;
+			else if (strcmp(zoom_action_string, "wide-fast") == 0)
+				zoom_action = V4L2_OPTICAL_ZOOM_WIDE_START;
+			else if (strcmp(zoom_action_string, "wide-slow") == 0)
+				zoom_action = V4L2_OPTICAL_ZOOM_SLOW_WIDE_START;
+		}
+
+		if (zoom_action != exynos_camera->zoom_action) {
+			rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_OPTICAL_ZOOM_CTRL, zoom_action);
+			if (rc < 0)
+				ALOGE("%s: Unable to set the zoom action %s", __func__, zoom_action_string);
+			exynos_camera->zoom_action = zoom_action;
+			exynos_camera->zoom_status_time = 0;
+			if (zoom_action == V4L2_OPTICAL_ZOOM_STOP)
+				exynos_camera->zoom_settle_until = exynos_camera_m9mo_now_ms() + 1000;
+		}
+
+		if (exynos_camera->zoom_action != V4L2_OPTICAL_ZOOM_STOP ||
+			exynos_camera_m9mo_now_ms() < exynos_camera->zoom_settle_until)
+			exynos_param_int_set(exynos_camera, "zoom", exynos_camera->zoom);
+	}
+#endif
 	if (zoom_supported_string != NULL && strcmp(zoom_supported_string, "true") == 0) {
 		zoom = exynos_param_int_get(exynos_camera, "zoom");
 		max_zoom = exynos_param_int_get(exynos_camera, "max-zoom");
@@ -1814,6 +1893,71 @@ pasm_mode:
 				pasm_string, shutter_string != NULL ? shutter_string : "-",
 				f_number / 10, f_number % 10, exynos_camera->iso);
 			exynos_camera->pasm_mode = pasm_mode;
+		}
+	}
+
+	// Metering: matrix (multi), center-weighted or spot (m9mo_set_metering())
+	{
+		char *metering_string = exynos_param_string_get(exynos_camera, "metering");
+		int metering = -1;
+
+		if (metering_string != NULL) {
+			if (strcmp(metering_string, "matrix") == 0)
+				metering = METERING_MATRIX;
+			else if (strcmp(metering_string, "center") == 0)
+				metering = METERING_CENTER;
+			else if (strcmp(metering_string, "spot") == 0)
+				metering = METERING_SPOT;
+		}
+
+		if (metering >= 0 && (metering != exynos_camera->metering || force)) {
+			rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_METERING, metering);
+			if (rc < 0)
+				ALOGE("%s: Unable to set the metering", __func__);
+			exynos_camera->metering = metering;
+		}
+	}
+
+	/*
+	 * Bracketing, used by the next takePicture():
+	 * - capture-mode: single, ae-bracket (three exposures at 3 fps) or hdr
+	 *   (the same at 7.5 fps, about 0.4 s for all three);
+	 * - bracket-ev: the step between them, one of bracket-ev-values.
+	 * A bracket delivers three JPEG callbacks: num-snaps-per-shutter tells
+	 * CameraService to keep the JPEG message enabled for all of them.
+	 */
+	{
+		char *capture_mode_string = exynos_param_string_get(exynos_camera, "capture-mode");
+		char bracket_ev_value[16];
+		int capture_mode = RUNNING_MODE_SINGLE;
+		int bracket_ev;
+
+		if (capture_mode_string != NULL) {
+			if (strcmp(capture_mode_string, "ae-bracket") == 0)
+				capture_mode = RUNNING_MODE_AE_BRACKET;
+			else if (strcmp(capture_mode_string, "hdr") == 0)
+				capture_mode = RUNNING_MODE_HDR;
+		}
+		exynos_camera->capture_mode = capture_mode;
+		exynos_param_int_set(exynos_camera, "num-snaps-per-shutter",
+			capture_mode == RUNNING_MODE_SINGLE ? 1 : 3);
+
+		// Parsed as an int or a float ("2", "1.0"), and printed back with
+		// %g: compare as numbers
+		if (exynos_param_value_string(exynos_camera, "bracket-ev", bracket_ev_value, sizeof(bracket_ev_value)) == 0) {
+			static const float steps[] = { 0.3f, 0.6f, 1.0f, 1.3f, 1.6f, 2.0f };
+			float ev = strtof(bracket_ev_value, NULL);
+			unsigned int i;
+
+			bracket_ev = -1;
+			for (i = 0; i < sizeof(steps) / sizeof(steps[0]); i++)
+				if (fabsf(ev - steps[i]) < 0.05f)
+					bracket_ev = BRACKET_AEB_VALUE1 + i;
+
+			if (bracket_ev > 0)
+				exynos_camera->bracket_ev = bracket_ev;
+			else
+				ALOGE("%s: Unknown bracket-ev %s", __func__, bracket_ev_value);
 		}
 	}
 #endif
@@ -3088,6 +3232,17 @@ int exynos_camera_preview_start(struct exynos_camera *exynos_camera)
 	exynos_camera_capture_thread_start(exynos_camera);
 	exynos_camera_capture_setup(exynos_camera);
 
+#ifdef EXYNOS_M9MO
+	/*
+	 * The lens only zooms in monitor mode, which the preview STREAMON
+	 * above enters. The zoom params_apply() sent at power-up was lost, so
+	 * a reopened camera came out at wide while zoom still said N.
+	 */
+	if (exynos_camera->zoom > 0 &&
+		exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_ZOOM, exynos_camera->zoom) < 0)
+		ALOGE("%s: Unable to restore the zoom", __func__);
+#endif
+
 	exynos_camera->preview_enabled = 1;
 
 	pthread_mutex_unlock(&exynos_camera->preview_mutex);
@@ -3625,23 +3780,42 @@ unlock:
 	pthread_mutex_unlock(&exynos_camera->params_mutex);
 }
 
+/*
+ * Bracketing (capture-mode ae-bracket or hdr): RUNNING_MODE_AE_BRACKET or
+ * _HDR makes the ISP expose three frames back to back at the bracket-ev step
+ * (m9mo_set_capture_mode(), m9mo_set_bracket_aeb()) and keep them. Each one
+ * is then read like the RAW mode's frames: CAPTURE=n selects frame n (1-3)
+ * and transfers it as a JPEG, with FIMC restarted in between. They go to the
+ * app as three JPEG callbacks, in the ISP's order (see docs/CAMERA-APP.md).
+ * Before each callback, bracket-index, bracket-frame-ev and exif-* describe
+ * that frame. The flash stays off for the whole bracket.
+ */
+
 void *exynos_camera_m9mo_picture(void *data)
 {
 	struct exynos_camera *exynos_camera = (struct exynos_camera *) data;
 	camera_memory_t *buffer = NULL;
 	camera_memory_t *jpeg = NULL;
+	camera_memory_t *bracket_jpeg[M9MO_BRACKET_FRAMES] = { NULL };
+	// Each frame's exposure, as m9mo_exif() reads it after its transfer
+	static const char *bracket_exif_keys[] = { "exif-iso", "exif-tv", "exif-av", "exif-bv", "exif-ebv" };
+	int bracket_exif[M9MO_BRACKET_FRAMES][sizeof(bracket_exif_keys) / sizeof(bracket_exif_keys[0])];
+	unsigned int key;
 	camera_memory_t *raw_memory = NULL;
 	int width = exynos_camera->picture_width;
 	int height = exynos_camera->picture_height;
-	int raw = property_get_bool("persist.vendor.camera.raw", 0);
+	int capture_mode = exynos_camera->capture_mode;
+	int bracket = capture_mode == RUNNING_MODE_AE_BRACKET || capture_mode == RUNNING_MODE_HDR;
+	int raw = !bracket && property_get_bool("persist.vendor.camera.raw", 0);
 	char raw_path[128] = "";
 	int streaming = 0;
 	int exposed = 0;
 	int success = 0;
 	int length, size = 0;
-	int fd, rc, i;
+	int fd, rc, i, frame;
 
-	ALOGD("%s(): %dx%d%s", __func__, width, height, raw ? ", RAW" : "");
+	ALOGD("%s(): %dx%d%s%s", __func__, width, height, raw ? ", RAW" : "",
+		bracket ? (capture_mode == RUNNING_MODE_HDR ? ", HDR bracket" : ", AE bracket") : "");
 
 	// take_picture() holds the callback lock until picture_start returns
 	for (i = 0; exynos_camera->callback_lock && i < 1000; i++)
@@ -3676,6 +3850,19 @@ void *exynos_camera_m9mo_picture(void *data)
 		rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_CAPTURE_MODE, RUNNING_MODE_RAW);
 		if (rc < 0) {
 			ALOGE("%s: Unable to set the RAW capture mode", __func__);
+			goto error;
+		}
+	}
+
+	if (bracket) {
+		// No flash in a bracket: it could not recharge between the frames
+		exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_FLASH_MODE, FLASH_MODE_OFF);
+
+		rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_BRACKET_AEB, exynos_camera->bracket_ev);
+		if (rc >= 0)
+			rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_CAPTURE_MODE, capture_mode);
+		if (rc < 0) {
+			ALOGE("%s: Unable to set the bracket capture mode", __func__);
 			goto error;
 		}
 	}
@@ -3785,6 +3972,62 @@ void *exynos_camera_m9mo_picture(void *data)
 		streaming = 1;
 	}
 
+	if (bracket) {
+		for (frame = 1; frame <= M9MO_BRACKET_FRAMES; frame++) {
+			/*
+			 * Restart FIMC before every frame: it stops after each JPEG
+			 * frame (lastend), and before the first one it has already
+			 * taken (and skipped) a stray frame the ISP sent while
+			 * exposing. The ISP holds the exposures and does not expose
+			 * again. Before the first frame the buffer is still queued
+			 * (FIMC 5.1 keeps its queue across STREAMOFF), so it is only
+			 * queued again after a dequeue.
+			 */
+			exynos_v4l2_streamoff_cap(exynos_camera, 0);
+			streaming = 0;
+
+			rc = frame > 1 ? exynos_v4l2_qbuf_cap(exynos_camera, 0, 0) : 0;
+			if (rc >= 0)
+				rc = exynos_v4l2_streamon_cap(exynos_camera, 0);
+			if (rc < 0) {
+				ALOGE("%s: Unable to restart the capture for bracket frame %d", __func__, frame);
+				goto error;
+			}
+			streaming = 1;
+
+			rc = exynos_camera_m9mo_get_frame(exynos_camera, frame, &size);
+			if (rc < 0)
+				goto error;
+			if (size > length) {
+				ALOGE("%s: Invalid JPEG size %d for bracket frame %d", __func__, size, frame);
+				goto error;
+			}
+
+			ALOGD("%s: bracket frame %d, JPEG of %d bytes", __func__, frame, size);
+
+			exynos_camera_m9mo_exif(exynos_camera, NULL);
+			pthread_mutex_lock(&exynos_camera->params_mutex);
+			for (key = 0; key < sizeof(bracket_exif_keys) / sizeof(bracket_exif_keys[0]); key++)
+				bracket_exif[frame - 1][key] = exynos_param_int_get(exynos_camera, (char *) bracket_exif_keys[key]);
+			pthread_mutex_unlock(&exynos_camera->params_mutex);
+
+			bracket_jpeg[frame - 1] = exynos_camera->callbacks.request_memory(-1, size, 1, exynos_camera->callbacks.user);
+			if (bracket_jpeg[frame - 1] == NULL || bracket_jpeg[frame - 1]->data == NULL ||
+				bracket_jpeg[frame - 1]->data == MAP_FAILED) {
+				ALOGE("%s: Unable to request memory for bracket frame %d", __func__, frame);
+				if (bracket_jpeg[frame - 1] != NULL && bracket_jpeg[frame - 1]->release != NULL)
+					bracket_jpeg[frame - 1]->release(bracket_jpeg[frame - 1]);
+				bracket_jpeg[frame - 1] = NULL;
+				goto error;
+			}
+
+			memcpy(bracket_jpeg[frame - 1]->data, buffer->data, size);
+		}
+
+		success = 1;
+		goto complete;
+	}
+
 	rc = exynos_camera_m9mo_get_frame(exynos_camera, raw ? 1 : 0, &size);
 	if (rc < 0)
 		goto error;
@@ -3833,8 +4076,12 @@ complete:
 	exynos_v4l2_reqbufs_cap(exynos_camera, 0, 0);
 
 	// The driver keeps running_capture_mode: go back to single shots
-	if (raw)
+	if (raw || bracket)
 		exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_CAPTURE_MODE, RUNNING_MODE_SINGLE);
+
+	// And the app's flash mode, switched off for the bracket
+	if (bracket)
+		exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_FLASH_MODE, exynos_camera->flash_mode);
 
 	// Parameters set during the capture were only stored: apply them now
 	pthread_mutex_lock(&exynos_camera->params_mutex);
@@ -3851,14 +4098,61 @@ complete:
 		if (raw_memory != NULL && EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_RAW_IMAGE) && EXYNOS_CAMERA_CALLBACK_DEFINED(data))
 			exynos_camera->callbacks.data(CAMERA_MSG_RAW_IMAGE, raw_memory, 0, NULL, exynos_camera->callbacks.user);
 
-		if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_COMPRESSED_IMAGE) && EXYNOS_CAMERA_CALLBACK_DEFINED(data))
+		if (bracket) {
+			/*
+			 * CameraService keeps the message enabled for
+			 * num-snaps-per-shutter callbacks. It forwards them to the app
+			 * asynchronously, so by the time the app reads the parameters
+			 * in a callback they may already describe a later frame. So
+			 * all frames go first into bracket-exif, in delivery order
+			 * (the ISP's: -EV, 0, +EV), as "iso,tv,av,bv,ebv;..." with
+			 * the exif-* scale, kept until the next shot. bracket-index,
+			 * bracket-frame-ev and exif-* are still set per frame.
+			 */
+			{
+				char bracket_exif_string[160];
+				size_t length = 0;
+
+				bracket_exif_string[0] = '\0';
+				for (frame = 0; frame < M9MO_BRACKET_FRAMES; frame++)
+					length += snprintf(bracket_exif_string + length, sizeof(bracket_exif_string) - length,
+						"%s%d,%d,%d,%d,%d", frame ? ";" : "",
+						bracket_exif[frame][0], bracket_exif[frame][1], bracket_exif[frame][2],
+						bracket_exif[frame][3], bracket_exif[frame][4]);
+
+				pthread_mutex_lock(&exynos_camera->params_mutex);
+				exynos_param_string_set(exynos_camera, "bracket-exif", bracket_exif_string);
+				pthread_mutex_unlock(&exynos_camera->params_mutex);
+			}
+
+			for (frame = 0; frame < M9MO_BRACKET_FRAMES; frame++) {
+				pthread_mutex_lock(&exynos_camera->params_mutex);
+				for (key = 0; key < sizeof(bracket_exif_keys) / sizeof(bracket_exif_keys[0]); key++)
+					exynos_param_int_set(exynos_camera, (char *) bracket_exif_keys[key], bracket_exif[frame][key]);
+				exynos_param_int_set(exynos_camera, "bracket-index", frame);
+				exynos_param_float_set(exynos_camera, "bracket-frame-ev", bracket_exif[frame][4] / 100.0f);
+				pthread_mutex_unlock(&exynos_camera->params_mutex);
+
+				ALOGD("%s: bracket frame %d: ISO %d, TV %d, AV %d, BV %d, EBV %d", __func__, frame,
+					bracket_exif[frame][0], bracket_exif[frame][1], bracket_exif[frame][2],
+					bracket_exif[frame][3], bracket_exif[frame][4]);
+
+				if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_COMPRESSED_IMAGE) && EXYNOS_CAMERA_CALLBACK_DEFINED(data))
+					exynos_camera->callbacks.data(CAMERA_MSG_COMPRESSED_IMAGE, bracket_jpeg[frame], 0, NULL, exynos_camera->callbacks.user);
+			}
+		} else if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_COMPRESSED_IMAGE) && EXYNOS_CAMERA_CALLBACK_DEFINED(data)) {
 			exynos_camera->callbacks.data(CAMERA_MSG_COMPRESSED_IMAGE, jpeg, 0, NULL, exynos_camera->callbacks.user);
+		}
 	} else if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_ERROR) && EXYNOS_CAMERA_CALLBACK_DEFINED(notify)) {
 		exynos_camera->callbacks.notify(CAMERA_MSG_ERROR, -1, 0, exynos_camera->callbacks.user);
 	}
 
 	if (jpeg != NULL && jpeg->release != NULL)
 		jpeg->release(jpeg);
+
+	for (frame = 0; frame < M9MO_BRACKET_FRAMES; frame++)
+		if (bracket_jpeg[frame] != NULL && bracket_jpeg[frame]->release != NULL)
+			bracket_jpeg[frame]->release(bracket_jpeg[frame]);
 
 	if (raw_memory != NULL && raw_memory->release != NULL)
 		raw_memory->release(raw_memory);
@@ -4998,6 +5292,108 @@ static void exynos_camera_m9mo_flash_status(struct exynos_camera *exynos_camera)
 	exynos_param_string_set(exynos_camera, "flash-popup", ((value >> 8) & 0xff) ? "up" : "down");
 	exynos_param_int_set(exynos_camera, "m9mo-strobe-charge", value & 0xff);
 }
+
+/*
+ * The zoom position while zoom-action moves the lens, and for a moment
+ * after a stop: G_CTRL OPTICAL_ZOOM_CTRL returns the ISP's zoom step (0-15)
+ * in bits 0-3 (m9mo_get_zoom_level()). Read at most every 100 ms.
+ */
+static void exynos_camera_m9mo_zoom_status(struct exynos_camera *exynos_camera)
+{
+	long long now_ms;
+	int value = 0;
+	int position;
+
+	if (exynos_v4l2_fd(exynos_camera, 0) < 0 || exynos_camera->picture_enabled)
+		return;
+
+	now_ms = exynos_camera_m9mo_now_ms();
+	if (exynos_camera->zoom_action == V4L2_OPTICAL_ZOOM_STOP && now_ms >= exynos_camera->zoom_settle_until)
+		return;
+	if (now_ms - exynos_camera->zoom_status_time < 100)
+		return;
+	exynos_camera->zoom_status_time = now_ms;
+
+	if (exynos_v4l2_g_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_OPTICAL_ZOOM_CTRL, &value) < 0)
+		return;
+
+	position = value & 0xf;
+	if (position > exynos_param_int_get(exynos_camera, "max-zoom"))
+		return;
+
+	exynos_camera->zoom = position;
+	exynos_param_int_set(exynos_camera, "zoom", position);
+}
+
+/*
+ * What the ISP's exposure program is doing during the preview, for an
+ * exposure meter and a P/A/S readout: the AE "now" registers (m9mo_get_tv(),
+ * _av(), _sv(), _lv()), read at most every 250 ms.
+ *
+ * TV, AV and SV are APEX values in Q16 fixed point (checked on the device
+ * on 2026-11-02 against a shot in P: AV 194698 = 2.97 = f/2.8, SV ~370000 =
+ * 5.65 = ISO 160). They go out as APEX x100, the exif-* scale:
+ * - live-tv, live-av: the preview's exposure (the preview's TV is capped by
+ *   its 30 fps, so it can be shorter than the shot's);
+ * - live-bv = Av + Tv - Sv, the metered scene brightness: it matched the
+ *   shot's exif-bv exactly (257);
+ * - live-iso = 3.125 * 2^Sv;
+ * - live-lv: the ISP's LV register as is (an integer, about EV at ISO 100).
+ * The raw values stay in m9mo-live-raw.
+ */
+static void exynos_camera_m9mo_live_exposure(struct exynos_camera *exynos_camera)
+{
+	static const int cids[] = {
+		V4L2_CID_CAMERA_TV, V4L2_CID_CAMERA_AV, V4L2_CID_CAMERA_SV, V4L2_CID_CAMERA_LV,
+	};
+	int values[sizeof(cids) / sizeof(cids[0])];
+	char raw[128];
+	long long now_ms;
+	unsigned int i;
+
+	if (exynos_v4l2_fd(exynos_camera, 0) < 0 || exynos_camera->picture_enabled ||
+		!exynos_camera->preview_enabled)
+		return;
+
+	now_ms = exynos_camera_m9mo_now_ms();
+	if (exynos_camera->live_exposure_time != 0 && now_ms - exynos_camera->live_exposure_time < 250)
+		return;
+	exynos_camera->live_exposure_time = now_ms;
+
+	for (i = 0; i < sizeof(cids) / sizeof(cids[0]); i++) {
+		values[i] = 0;
+		if (exynos_v4l2_g_ctrl(exynos_camera, 0, cids[i], &values[i]) < 0)
+			return;
+	}
+
+	/*
+	 * In M the "now" registers report the manual exposure, not the scene
+	 * (checked 2026-11-02), so they cannot drive a meter there. Expose
+	 * Samsung's other live readouts raw next to them, to find one that
+	 * keeps metering in M: PRO_MODE SMART_READ1/2 and the warning
+	 * condition. Not fatal if they fail.
+	 */
+	{
+		int smart_read1 = 0, smart_read2 = 0, warning = 0;
+
+		exynos_v4l2_g_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_SMART_READ1, &smart_read1);
+		exynos_v4l2_g_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_SMART_READ2, &smart_read2);
+		exynos_v4l2_g_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_WARNING_CONDITION, &warning);
+
+		snprintf(raw, sizeof(raw), "%d,%d,%d,%d,%d,%d,%d", values[0], values[1], values[2], values[3],
+			smart_read1, smart_read2, warning);
+		exynos_param_string_set(exynos_camera, "m9mo-live-raw", raw);
+	}
+
+	// Q16 APEX to APEX x100, rounded
+#define Q16_TO_APEX100(q) ((int) (((long long) (q) * 100 + 32768) >> 16))
+	exynos_param_int_set(exynos_camera, "live-tv", Q16_TO_APEX100(values[0]));
+	exynos_param_int_set(exynos_camera, "live-av", Q16_TO_APEX100(values[1]));
+	exynos_param_int_set(exynos_camera, "live-bv", Q16_TO_APEX100((long long) values[1] + values[0] - values[2]));
+	exynos_param_int_set(exynos_camera, "live-iso", (int) (3.125 * pow(2.0, values[2] / 65536.0) + 0.5));
+	exynos_param_int_set(exynos_camera, "live-lv", values[3]);
+#undef Q16_TO_APEX100
+}
 #endif
 
 char *exynos_camera_get_parameters(struct camera_device *dev)
@@ -5016,6 +5412,8 @@ char *exynos_camera_get_parameters(struct camera_device *dev)
 
 #ifdef EXYNOS_M9MO
 	exynos_camera_m9mo_flash_status(exynos_camera);
+	exynos_camera_m9mo_zoom_status(exynos_camera);
+	exynos_camera_m9mo_live_exposure(exynos_camera);
 #endif
 
 	params = exynos_params_string_get(exynos_camera);
