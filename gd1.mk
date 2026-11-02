@@ -82,6 +82,13 @@ PRODUCT_COPY_FILES += \
 PRODUCT_SYSTEM_PROPERTIES += \
     persist.sys.timezone=Europe/Rome
 
+# Storage: FUSE with bind mounts, as on GKI devices, not sdcardfs. The 3.4
+# kernel's sdcardfs leaks a dentry reference on the microSD: unmounting it
+# at reboot hit the BUG in shrink_dcache_for_umount_subtree() and panicked
+# (2026-11-02, after the camera app had saved photos there).
+PRODUCT_PRODUCT_PROPERTIES += \
+    external_storage.sdcardfs.enabled=false
+
 # Hardware features: a camera with 3G data, not a phone
 PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/handheld_core_hardware.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/handheld_core_hardware.xml \
