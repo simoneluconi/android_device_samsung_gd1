@@ -2964,7 +2964,14 @@ int exynos_camera_preview(struct exynos_camera *exynos_camera)
 		exynos_camera->callbacks.data(CAMERA_MSG_PREVIEW_FRAME, memory, memory_index, NULL, exynos_camera->callbacks.user);
 	}
 
-	if (EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_PREVIEW_METADATA) && EXYNOS_CAMERA_CALLBACK_DEFINED(data) && !exynos_camera->callback_lock) {
+	/*
+	 * CameraService enables CAMERA_MSG_PREVIEW_METADATA for every client and
+	 * never disables it, and its data callback spins for the client lock
+	 * while that message is enabled. Sent on every frame, it deadlocked a
+	 * stopPreview() that holds that lock and joins this thread. Send it only
+	 * while face detection runs (never on the M9MO, which reports no faces).
+	 */
+	if (exynos_camera->face_detection_active && EXYNOS_CAMERA_MSG_ENABLED(CAMERA_MSG_PREVIEW_METADATA) && EXYNOS_CAMERA_CALLBACK_DEFINED(data) && !exynos_camera->callback_lock) {
 		exynos_camera->callbacks.data(CAMERA_MSG_PREVIEW_METADATA, exynos_camera->face_data, 0, &exynos_camera->mFaceData, exynos_camera->callbacks.user);
 	}
 
@@ -5070,14 +5077,20 @@ int exynos_camera_send_command(struct camera_device *dev,
 	ALOGD("%s(%p, %d, %d, %d)", __func__, dev, cmd, arg1, arg2);
 	switch (cmd) {
 		case CAMERA_CMD_START_FACE_DETECTION:
+			if (exynos_camera->max_detected_faces <= 0)
+				return -EINVAL;
 			if (setFaceDetect(exynos_camera, FACE_DETECTION_ON) < 0) {
 				ALOGE("ERR: Fail on setFaceDetect(ON)");
 				return -EINVAL;
 			} else {
+				exynos_camera->face_detection_active = 1;
 				return 0;
 			}
 			break;
 		case CAMERA_CMD_STOP_FACE_DETECTION:
+			exynos_camera->face_detection_active = 0;
+			if (exynos_camera->max_detected_faces <= 0)
+				return 0;
 			if (setFaceDetect(exynos_camera, FACE_DETECTION_OFF) < 0) {
 				ALOGE("ERR: Fail on setFaceDetect(OFF)");
 				return -EINVAL;

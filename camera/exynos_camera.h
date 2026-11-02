@@ -386,6 +386,9 @@ struct exynos_camera {
 	camera_frame_metadata_t mFaceData;
 	camera_memory_t *face_data;
 	int max_detected_faces;
+	// Between CAMERA_CMD_START_FACE_DETECTION and _STOP: the only time
+	// CAMERA_MSG_PREVIEW_METADATA may be sent (see exynos_camera_preview)
+	int face_detection_active;
 
 	// Recording
 
