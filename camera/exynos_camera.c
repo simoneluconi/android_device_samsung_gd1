@@ -2196,8 +2196,13 @@ pasm_mode:
 			}
 		}
 
+		/*
+		 * Not TIMER_MODE (Samsung's OIS self-timer flag, NEW 0x07): with
+		 * the OIS off it changed the ISP's frame output so that a RAW
+		 * shot right after the countdown lost its raw frame ("No frame
+		 * 0", 2026-11-03). The lamp does not need it.
+		 */
 		if (timer_led != exynos_camera->timer_led || force) {
-			exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_TIMER_MODE, timer_led);
 			rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_TIMER_LED, timer_led);
 			if (rc < 0)
 				ALOGE("%s: Unable to set timer-led", __func__);
