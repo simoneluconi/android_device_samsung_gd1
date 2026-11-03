@@ -404,6 +404,9 @@ struct exynos_camera {
 	int bracket_ev;
 	// raw-capture=on: the next shot also delivers the raw frame
 	int raw_capture;
+	// af-lamp (0/1) and timer-led (V4L2_TIMER_LED_*), as last applied
+	int af_lamp;
+	int timer_led;
 
 	int picture_completed;
 	camera_memory_t *picture_memory;

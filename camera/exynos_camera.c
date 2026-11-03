@@ -1003,6 +1003,14 @@ int exynos_camera_params_init(struct exynos_camera *exynos_camera, int id)
 	exynos_param_string_set(exynos_camera, "raw-capture-values", "off,on");
 	exynos_camera->raw_capture = 0;
 
+	// AF assist lamp and self-timer lamp, see exynos_camera_params_apply()
+	exynos_param_string_set(exynos_camera, "af-lamp", "on");
+	exynos_param_string_set(exynos_camera, "af-lamp-values", "on,off");
+	exynos_camera->af_lamp = -1;
+	exynos_param_string_set(exynos_camera, "timer-led", "off");
+	exynos_param_string_set(exynos_camera, "timer-led-values", "off,2,5,10");
+	exynos_camera->timer_led = V4L2_TIMER_LED_OFF;
+
 	// AF window and readouts, see exynos_camera_params_apply() and
 	// exynos_camera_m9mo_af_status()
 	exynos_param_string_set(exynos_camera, "af-area", "center");
@@ -2062,11 +2070,69 @@ pasm_mode:
 
 		if (image_stabilization != exynos_camera->image_stabilization || force) {
 			exynos_camera->image_stabilization = image_stabilization;
+#ifdef EXYNOS_M9MO
+			/*
+			 * The M9MO's optical stabilizer, as Samsung's HAL drives it
+			 * (setImageStabilizermode, setOISmode): m9mo_init() only boots
+			 * the OIS, IMAGE_STABILIZER starts or stops it and
+			 * IS_OIS_MODE picks the still mode. ANTI_SHAKE, used before,
+			 * is not the OIS on the M9MO: it switches the AE program to
+			 * Samsung's anti-shake one (EP_MODE 0x0E), over the PASM one.
+			 * TODO: IS_OIS_MODE movie while recording.
+			 */
+			rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_IMAGE_STABILIZER,
+				image_stabilization ? V4L2_IMAGE_STABILIZER_OIS : V4L2_IMAGE_STABILIZER_OFF);
+			if (rc >= 0 && image_stabilization)
+				rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_IS_OIS_MODE, V4L2_IS_OIS_STILL);
+#else
 			rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_ANTI_SHAKE, image_stabilization);
+#endif
 			if (rc < 0)
 				ALOGE("%s: Unable to set image-stabilization", __func__);
 		}
 	}
+
+#ifdef EXYNOS_M9MO
+	/*
+	 * af-lamp: the AF assist lamp (LENS 0x1C), on by default as in Samsung's
+	 * app. timer-led: the ISP's own self-timer blink for a 2, 5 or 10 s
+	 * countdown, started when set and stopped with "off" (the app sets it
+	 * when its countdown starts, and off at the end, on cancel and on pause).
+	 * TIMER_MODE is Samsung's self-timer flag for the OIS, set alongside.
+	 */
+	{
+		char *af_lamp_string = exynos_param_string_get(exynos_camera, "af-lamp");
+		char *timer_led_string = exynos_param_string_get(exynos_camera, "timer-led");
+		int af_lamp = af_lamp_string == NULL || strcmp(af_lamp_string, "off") != 0;
+		int timer_led = V4L2_TIMER_LED_OFF;
+
+		if (af_lamp != exynos_camera->af_lamp || force) {
+			rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_AF_LED, af_lamp);
+			if (rc < 0)
+				ALOGE("%s: Unable to set af-lamp", __func__);
+			else
+				exynos_camera->af_lamp = af_lamp;
+		}
+
+		if (timer_led_string != NULL && strcmp(timer_led_string, "off") != 0) {
+			timer_led = atoi(timer_led_string);
+			if (timer_led != V4L2_TIMER_LED_2_SEC && timer_led != V4L2_TIMER_LED_5_SEC &&
+				timer_led != V4L2_TIMER_LED_10_SEC) {
+				ALOGE("%s: Unknown timer-led %s", __func__, timer_led_string);
+				timer_led = V4L2_TIMER_LED_OFF;
+			}
+		}
+
+		if (timer_led != exynos_camera->timer_led || force) {
+			exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_TIMER_MODE, timer_led);
+			rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_TIMER_LED, timer_led);
+			if (rc < 0)
+				ALOGE("%s: Unable to set timer-led", __func__);
+			else
+				exynos_camera->timer_led = timer_led;
+		}
+	}
+#endif
 	ALOGD("%s: Preview size: %dx%d, picture size: %dx%d, recording size: %dx%d", __func__, preview_width, preview_height, picture_width, picture_height, recording_width, recording_height);
 
 	return 0;
@@ -5568,14 +5634,41 @@ static void exynos_camera_m9mo_live_exposure(struct exynos_camera *exynos_camera
 	 */
 	{
 		int smart_read1 = 0, smart_read2 = 0, warning = 0;
+		int smart_read1_ok;
 
-		exynos_v4l2_g_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_SMART_READ1, &smart_read1);
+		smart_read1_ok = exynos_v4l2_g_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_SMART_READ1, &smart_read1) >= 0;
 		exynos_v4l2_g_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_SMART_READ2, &smart_read2);
 		exynos_v4l2_g_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_WARNING_CONDITION, &warning);
 
 		snprintf(raw, sizeof(raw), "%d,%d,%d,%d,%d,%d,%d", values[0], values[1], values[2], values[3],
 			smart_read1, smart_read2, warning);
 		exynos_param_string_set(exynos_camera, "m9mo-live-raw", raw);
+
+		/*
+		 * The exposure the ISP plans for the shot, from SMART_READ1 as the
+		 * stock app decodes it (docs/CAMERA-APP.md). Unlike the "now"
+		 * registers it keeps tracking in the dark, where the 30 fps
+		 * preview runs out of TV (checked 2026-11-03: 1 s, f/2.8, ISO 400
+		 * matched the shot's EXIF):
+		 * - bits 24-29: the shutter field, 1/3-stop steps from 16 s, so
+		 *   TV = field / 3 - 4;
+		 * - bits 16-23: the f-number x 10 as two BCD digits, AV = 2 log2 f;
+		 * - bits 13-15: the auto ISO, 0-5 = 100 to 3200 in whole stops
+		 *   (coarser than live-iso).
+		 */
+		if (smart_read1_ok && smart_read1 != 0) {
+			unsigned int s1 = (unsigned int) smart_read1;
+			int shutter = (s1 >> 24) & 0x3f;
+			int tens = (s1 >> 20) & 0xf, units = (s1 >> 16) & 0xf;
+			int iso_code = (s1 >> 13) & 0x7;
+
+			exynos_param_int_set(exynos_camera, "live-shot-tv", (int) lround((shutter / 3.0 - 4.0) * 100.0));
+			if (tens <= 9 && units <= 9 && tens * 10 + units > 0)
+				exynos_param_int_set(exynos_camera, "live-shot-av",
+					(int) lround(200.0 * log2((tens * 10 + units) / 10.0)));
+			if (iso_code <= 5)
+				exynos_param_int_set(exynos_camera, "live-shot-iso", 100 << iso_code);
+		}
 	}
 
 	// Q16 APEX to APEX x100, rounded
