@@ -407,6 +407,10 @@ struct exynos_camera {
 	// af-lamp (0/1) and timer-led (V4L2_TIMER_LED_*), as last applied
 	int af_lamp;
 	int timer_led;
+	// wb-kelvin as last applied, and the ISP look and correction options
+	// as last applied, indexed like m9mo_isp_options in exynos_camera.c
+	int wb_kelvin;
+	int isp_option[8];
 
 	int picture_completed;
 	camera_memory_t *picture_memory;

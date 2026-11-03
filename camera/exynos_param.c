@@ -221,8 +221,10 @@ int exynos_param_data_set(struct exynos_camera *exynos_camera, char *key,
 		return 0;
 	}
 
+	// Allowed: a key such as timer-led takes "off" and numbers. Read those
+	// with exynos_param_value_string(), which takes any type.
 	if (param->type != type)
-		ALOGE("%s: Mismatching types for key %s", __func__, key);
+		ALOGD("%s: Key %s changes type", __func__, key);
 
 	if (param->type == EXYNOS_PARAM_STRING && param->data.string != NULL)
 		free(param->data.string);

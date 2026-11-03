@@ -198,7 +198,8 @@ struct exynos_camera_preset exynos_camera_presets_smdk4x12[] = {
 			.max_exposure_compensation = 6,
 
 			.whitebalance = "auto",
-			.whitebalance_values = "auto,incandescent,fluorescent,daylight,cloudy-daylight",
+			// kelvin: the colour temperature in wb-kelvin
+			.whitebalance_values = "auto,incandescent,fluorescent,daylight,cloudy-daylight,kelvin",
 
 			.antibanding = NULL,
 			.antibanding_values = NULL,
@@ -778,6 +779,29 @@ void exynos_camera_stop(struct exynos_camera *exynos_camera)
 // Frames per bracket shot (the ISP's AE bracket and HDR modes take three)
 #define M9MO_BRACKET_FRAMES	3
 
+/*
+ * ISP look and correction options. None has a default parameter: each is
+ * sent only once the app sets it, so the ISP keeps its own default until
+ * then (the app can compare). Levels are -2..2 and go out as 0..4 (the
+ * driver's SHARPNESS_MINUS_2.. enums, and Samsung's HAL's flash step 0-4);
+ * on/off ones go out as 1/0.
+ */
+static const struct {
+	const char *key;
+	const char *values;
+	int cid;
+	int level; // -2..2, else on/off
+} m9mo_isp_options[] = {
+	{ "sharpness", "-2,-1,0,1,2", V4L2_CID_CAMERA_SHARPNESS, 1 },	// MON 0x20
+	{ "contrast", "-2,-1,0,1,2", V4L2_CID_CAMERA_CONTRAST, 1 },	// MON 0x25
+	{ "saturation", "-2,-1,0,1,2", V4L2_CID_CAMERA_SATURATION, 1 },	// MON 0x0F
+	{ "flash-ev", "-2,-1,0,1,2", V4L2_CID_CAMERA_SET_FLASH_EVC_STEP, 1 },	// CAPPARM 0x28
+	{ "wdr", "off,on", V4L2_CID_CAMERA_WDR, 0 },	// CAPPARM 0x2C
+	{ "lens-shading-correction", "off,on", V4L2_CID_CAMERA_LSC, 0 },	// PARM 0x07
+	{ "lens-distortion-correction", "off,on", V4L2_CID_CAMERA_LDC, 0 },	// PARM 0x1B
+};
+#define M9MO_ISP_OPTION_UNSET	(-100)
+
 // af-area, the AF window when no touch point is set (see params_apply)
 #define M9MO_AF_AREA_CENTER	0
 #define M9MO_AF_AREA_MULTI	1
@@ -1010,6 +1034,26 @@ int exynos_camera_params_init(struct exynos_camera *exynos_camera, int id)
 	exynos_param_string_set(exynos_camera, "timer-led", "off");
 	exynos_param_string_set(exynos_camera, "timer-led-values", "off,2,5,10");
 	exynos_camera->timer_led = V4L2_TIMER_LED_OFF;
+
+	// White balance in Kelvin, for whitebalance=kelvin
+	exynos_param_int_set(exynos_camera, "wb-kelvin", 5500);
+	exynos_param_int_set(exynos_camera, "wb-kelvin-min", 3000);
+	exynos_param_int_set(exynos_camera, "wb-kelvin-max", 10000);
+	exynos_param_int_set(exynos_camera, "wb-kelvin-step", 100);
+	exynos_camera->wb_kelvin = -1;
+
+	// ISP look and correction options: only the value lists, see
+	// m9mo_isp_options
+	{
+		unsigned int i;
+		char key[48];
+
+		for (i = 0; i < sizeof(m9mo_isp_options) / sizeof(m9mo_isp_options[0]); i++) {
+			snprintf(key, sizeof(key), "%s-values", m9mo_isp_options[i].key);
+			exynos_param_string_set(exynos_camera, key, (char *) m9mo_isp_options[i].values);
+			exynos_camera->isp_option[i] = M9MO_ISP_OPTION_UNSET;
+		}
+	}
 
 	// AF window and readouts, see exynos_camera_params_apply() and
 	// exynos_camera_m9mo_af_status()
@@ -1745,8 +1789,34 @@ int exynos_camera_params_apply(struct exynos_camera *exynos_camera, int force)
 			whitebalance = WHITE_BALANCE_SUNNY;
 		else if (strcmp(whitebalance_string, "cloudy-daylight") == 0)
 			whitebalance = WHITE_BALANCE_CLOUDY;
+#ifdef EXYNOS_M9MO
+		else if (strcmp(whitebalance_string, "kelvin") == 0)
+			whitebalance = WHITE_BALANCE_K;
+#endif
 		else
 			whitebalance = WHITE_BALANCE_AUTO;
+
+#ifdef EXYNOS_M9MO
+		/*
+		 * kelvin: wb-kelvin, 3000-10000 K in 100 K steps, as Samsung's HAL
+		 * takes it (setKvalue): the ISP wants K / 100 (WB 0x92), written
+		 * before the mode.
+		 */
+		if (whitebalance == WHITE_BALANCE_K) {
+			int kelvin = exynos_param_int_get(exynos_camera, "wb-kelvin");
+
+			if (kelvin < 3000 || kelvin > 10000)
+				kelvin = 5500;
+			if (kelvin != exynos_camera->wb_kelvin || whitebalance != exynos_camera->whitebalance || force) {
+				exynos_camera->wb_kelvin = kelvin;
+				rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_SET_K_VALUE, kelvin / 100);
+				if (rc < 0)
+					ALOGE("%s: Unable to set wb-kelvin", __func__);
+				// Re-apply the mode so that the ISP takes the new temperature
+				exynos_camera->whitebalance = -1;
+			}
+		}
+#endif
 
 		if (whitebalance != exynos_camera->whitebalance || force) {
 			exynos_camera->whitebalance = whitebalance;
@@ -2102,7 +2172,10 @@ pasm_mode:
 	 */
 	{
 		char *af_lamp_string = exynos_param_string_get(exynos_camera, "af-lamp");
-		char *timer_led_string = exynos_param_string_get(exynos_camera, "timer-led");
+		// "off" or a number: the stored type follows the last value set
+		char timer_led_value[16];
+		char *timer_led_string = exynos_param_value_string(exynos_camera, "timer-led",
+			timer_led_value, sizeof(timer_led_value)) == 0 ? timer_led_value : NULL;
 		int af_lamp = af_lamp_string == NULL || strcmp(af_lamp_string, "off") != 0;
 		int timer_led = V4L2_TIMER_LED_OFF;
 
@@ -2130,6 +2203,58 @@ pasm_mode:
 				ALOGE("%s: Unable to set timer-led", __func__);
 			else
 				exynos_camera->timer_led = timer_led;
+		}
+
+		/*
+		 * The ISP look and correction options (m9mo_isp_options), read as
+		 * strings whatever type the parser gave them ("-1" is an int,
+		 * "on" a string), sent on change and, once set, again on every
+		 * forced apply (the ISP forgets them across power-ups).
+		 */
+		{
+			unsigned int i;
+			char value[16];
+
+			for (i = 0; i < sizeof(m9mo_isp_options) / sizeof(m9mo_isp_options[0]); i++) {
+				int option;
+
+				if (exynos_param_value_string(exynos_camera, (char *) m9mo_isp_options[i].key, value, sizeof(value)) < 0)
+					continue;
+
+				if (m9mo_isp_options[i].level) {
+					option = atoi(value);
+					if (option < -2 || option > 2) {
+						ALOGE("%s: Invalid %s %s", __func__, m9mo_isp_options[i].key, value);
+						continue;
+					}
+					option += 2;
+				} else {
+					option = strcmp(value, "on") == 0;
+				}
+
+				if (option == exynos_camera->isp_option[i] && !force)
+					continue;
+
+				rc = exynos_v4l2_s_ctrl(exynos_camera, 0, m9mo_isp_options[i].cid, option);
+				if (rc < 0) {
+					ALOGE("%s: Unable to set %s", __func__, m9mo_isp_options[i].key);
+				} else {
+					ALOGD("%s: %s %s", __func__, m9mo_isp_options[i].key, value);
+					exynos_camera->isp_option[i] = option;
+				}
+			}
+		}
+
+		/*
+		 * The local time for the ISP (NEW 0x02, hour and minute), as
+		 * Samsung's driver takes it, at every power-up.
+		 */
+		if (force) {
+			time_t now = time(NULL);
+			struct tm tm;
+
+			localtime_r(&now, &tm);
+			exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_TIME_INFO, (tm.tm_hour << 8) | tm.tm_min);
 		}
 	}
 #endif
