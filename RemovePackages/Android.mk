@@ -3,8 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # The Galaxy Camera is a camera, not a phone: drop the apps it does not need
-# (dialer and messaging, NFC, printing, browser and stores, wallpapers and
-# themes, ...). Overriding them keeps LineageOS itself untouched.
+# (dialer, NFC, printing, browser and stores, wallpapers and themes, ...).
+# Overriding them keeps LineageOS itself untouched. The messaging app is not
+# removed here: the GC100 has a modem and keeps it (gd1.mk); a model without
+# one removes it in its own tree.
 # See "Build profile" in the project CLAUDE.md for the keep/remove decisions.
 
 LOCAL_PATH := $(call my-dir)
@@ -90,8 +92,7 @@ LOCAL_OVERRIDES_PACKAGES := \
     ThemePicker \
     ThemesStub \
     Updater \
-    WAPPushManager \
-    messaging
+    WAPPushManager
 LOCAL_UNINSTALLABLE_MODULE := true
 LOCAL_CERTIFICATE := PRESIGNED
 LOCAL_SRC_FILES := /dev/null

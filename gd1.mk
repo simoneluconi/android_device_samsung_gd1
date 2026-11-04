@@ -41,6 +41,11 @@ PRODUCT_PROPERTY_OVERRIDES += \
 PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.hardware.telephony.gsm.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.telephony.gsm.xml
 
+# SMS (user decision 2026-11-04): the GC100 has the modem, so it keeps the
+# messaging app. Still no dialer: no voice calls.
+PRODUCT_PACKAGES += \
+    messaging
+
 # RAM (768MB): dalvik heap, low RAM mode and the framework's trim limits
 $(call inherit-product, $(LOCAL_PATH)/phone-hdpi-512-dalvik-heap.mk)
 
