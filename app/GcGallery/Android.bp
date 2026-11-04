@@ -1,0 +1,32 @@
+//
+// Copyright (C) 2026 The GalaxyCameraRevived Project
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+
+package {
+    default_applicable_licenses: ["device_samsung_gd1_license"],
+}
+
+// GC Gallery, the camera's own gallery (camera-app/gallery in the GalaxyCameraRevived repo).
+// The APK is our release build, signed with the key we sideload with, so `pm install -r`
+// updates keep working on top of the system copy. Refresh it with tools/update-gallery-prebuilt.sh.
+android_app_import {
+    name: "GcGallery",
+    apk: "GcGallery.apk",
+    presigned: true,
+    // Signed with v2, which the build must not touch (targetSdk >= 30)
+    preprocessed: true,
+    dex_preopt: {
+        enabled: true,
+    },
+    required: ["default-permissions_com.simoneluconi.gcgallery.xml"],
+}
+
+// Photos and their GPS tags without a first-run prompt. MANAGE_MEDIA needs nothing here:
+// its protection level includes "preinstalled", so a system app holds it
+prebuilt_etc {
+    name: "default-permissions_com.simoneluconi.gcgallery.xml",
+    src: "default-permissions_com.simoneluconi.gcgallery.xml",
+    sub_dir: "default-permissions",
+}

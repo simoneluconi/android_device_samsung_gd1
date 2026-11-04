@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright (C) 2026 The GalaxyCameraRevived Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<exceptions>
+    <exception package="com.simoneluconi.gcgallery">
+        <permission name="android.permission.READ_MEDIA_IMAGES" fixed="false" />
+        <permission name="android.permission.ACCESS_MEDIA_LOCATION" fixed="false" />
+    </exception>
+</exceptions>

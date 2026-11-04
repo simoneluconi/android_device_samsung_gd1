@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-FileCopyrightText: 2026 The GalaxyCameraRevived Project
+     SPDX-License-Identifier: Apache-2.0
+-->
+<!--
+     The Go launcher's 4x4 home (idp_grid_name 4_by_4). The stock layout points
+     at the dialer, messaging, contacts, browser and Google apps, all removed,
+     which left only Settings. Here: our camera, our gallery and Settings on
+     the bottom row, no hotseat. The launcher skips an app that is not
+     installed when it first builds the home, so the camera and gallery only
+     show up from this once they ship in the build.
+-->
+<favorites xmlns:launcher="http://schemas.android.com/apk/res-auto/com.android.launcher3">
+    <favorite
+        launcher:packageName="com.simoneluconi.gccamera"
+        launcher:className="com.simoneluconi.gccamera.ui.ViewfinderActivity"
+        launcher:screen="0"
+        launcher:x="1"
+        launcher:y="-1" />
+    <favorite
+        launcher:packageName="com.simoneluconi.gcgallery"
+        launcher:className="com.simoneluconi.gcgallery.ui.GridActivity"
+        launcher:screen="0"
+        launcher:x="2"
+        launcher:y="-1" />
+    <favorite
+        launcher:packageName="com.android.settings"
+        launcher:className="com.android.settings.Settings"
+        launcher:screen="0"
+        launcher:x="3"
+        launcher:y="-1" />
+</favorites>

@@ -37,6 +37,8 @@ LOCAL_OVERRIDES_PACKAGES := \
     ExactCalculator \
     FontNotoSerifSourceOverlay \
     Gallery2 \
+    Glimpse \
+    GlimpseFrameworksBaseOverlay \
     IconPackCircularAndroidOverlay \
     IconPackCircularLauncherOverlay \
     IconPackCircularSettingsOverlay \
