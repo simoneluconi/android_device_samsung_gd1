@@ -4397,8 +4397,9 @@ complete:
 			 * asynchronously, so by the time the app reads the parameters
 			 * in a callback they may already describe a later frame. So
 			 * all frames go first into bracket-exif, in delivery order
-			 * (the ISP's: -EV, 0, +EV), as "iso,tv,av,bv,ebv;..." with
-			 * the exif-* scale, kept until the next shot. bracket-index,
+			 * (the ISP's: -EV, 0, +EV), as "iso,tv,av,bv,ebv|..." with
+			 * the exif-* scale, kept until the next shot. Not ';', which
+			 * separates the flattened parameters. bracket-index,
 			 * bracket-frame-ev and exif-* are still set per frame.
 			 */
 			{
@@ -4408,7 +4409,7 @@ complete:
 				bracket_exif_string[0] = '\0';
 				for (frame = 0; frame < M9MO_BRACKET_FRAMES; frame++)
 					length += snprintf(bracket_exif_string + length, sizeof(bracket_exif_string) - length,
-						"%s%d,%d,%d,%d,%d", frame ? ";" : "",
+						"%s%d,%d,%d,%d,%d", frame ? "|" : "",
 						bracket_exif[frame][0], bracket_exif[frame][1], bracket_exif[frame][2],
 						bracket_exif[frame][3], bracket_exif[frame][4]);
 
