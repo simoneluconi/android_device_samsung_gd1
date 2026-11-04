@@ -3964,23 +3964,52 @@ complete:
  */
 #define M9MO_RAW_DIR	"/data/vendor/camera"
 
+/*
+ * Transfer one frame from the ISP into the queued buffer.
+ *
+ * With one buffer, FIMC drops the first frame after STREAMON, and the
+ * transfer works because the ISP sends a short stray frame first (TODO.md,
+ * "Camera HAL stability"). If that stray frame is missing, the real one is
+ * dropped and nothing arrives. With can_retry, FIMC is then restarted and
+ * the same frame transferred once more: allowed while the ISP still holds
+ * the frame in still capture (the RAW frame, a single JPEG, bracket
+ * frames), not for a RAW shot's JPEG, after which the kernel has already
+ * put the ISP back in monitor mode. No dequeue happened, so the buffer is
+ * still queued across the restart.
+ */
 static int exynos_camera_m9mo_get_frame(struct exynos_camera *exynos_camera,
-	int which, int *size)
+	int which, int *size, int can_retry)
 {
-	int rc, i;
+	int rc, i, attempt;
 
-	rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_CAPTURE, which);
-	if (rc < 0) {
-		ALOGE("%s: Unable to start the transfer of frame %d", __func__, which);
-		return -1;
+	for (attempt = 0; attempt < (can_retry ? 2 : 1); attempt++) {
+		if (attempt > 0) {
+			ALOGE("%s: No frame %d, restarting FIMC and transferring it again", __func__, which);
+			exynos_v4l2_streamoff_cap(exynos_camera, 0);
+			rc = exynos_v4l2_streamon_cap(exynos_camera, 0);
+			if (rc < 0) {
+				ALOGE("%s: Unable to restart the capture for frame %d", __func__, which);
+				return -1;
+			}
+		}
+
+		rc = exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_CAPTURE, which);
+		if (rc < 0) {
+			ALOGE("%s: Unable to start the transfer of frame %d", __func__, which);
+			return -1;
+		}
+
+		for (i = 0, rc = 0; rc == 0 && i < 5; i++)
+			rc = exynos_v4l2_poll(exynos_camera, 0);
+		if (rc > 0)
+			break;
 	}
-
-	for (i = 0, rc = 0; rc == 0 && i < 5; i++)
-		rc = exynos_v4l2_poll(exynos_camera, 0);
 	if (rc <= 0) {
 		ALOGE("%s: No frame %d", __func__, which);
 		return -1;
 	}
+	if (attempt > 0)
+		ALOGD("%s: frame %d arrived on the second transfer", __func__, which);
 
 	rc = exynos_v4l2_dqbuf_cap(exynos_camera, 0);
 	if (rc < 0) {
@@ -4135,6 +4164,7 @@ void *exynos_camera_m9mo_picture(void *data)
 	int height = exynos_camera->picture_height;
 	int capture_mode = exynos_camera->capture_mode;
 	int bracket = capture_mode == RUNNING_MODE_AE_BRACKET || capture_mode == RUNNING_MODE_HDR;
+	int test_timer_mode = 0;
 	/*
 	 * RAW with raw-capture=on (per shot, from the app) or with the bring-up
 	 * property, which also keeps the frame and its .txt in M9MO_RAW_DIR.
@@ -4245,6 +4275,17 @@ void *exynos_camera_m9mo_picture(void *data)
 		goto error;
 	}
 
+	/*
+	 * Test (TODO.md, "Camera HAL stability"): Samsung's TIMER_MODE, which
+	 * the HAL no longer sends, once made a RAW shot with the OIS off lose
+	 * its frame. Setting it on purpose exercises the transfer retry.
+	 */
+	test_timer_mode = property_get_bool("vendor.camera.test.timer_mode", false);
+	if (test_timer_mode) {
+		ALOGD("%s: test: TIMER_MODE on for this shot", __func__);
+		exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_TIMER_MODE, 1);
+	}
+
 	// The exposure happens here
 	rc = exynos_v4l2_streamon_cap(exynos_camera, 0);
 	if (rc < 0) {
@@ -4265,7 +4306,7 @@ void *exynos_camera_m9mo_picture(void *data)
 
 	if (raw) {
 		// Frame 0: the raw sensor data
-		rc = exynos_camera_m9mo_get_frame(exynos_camera, 0, &size);
+		rc = exynos_camera_m9mo_get_frame(exynos_camera, 0, &size, 1);
 		if (rc == 0) {
 			if (size > length) {
 				ALOGE("%s: RAW frame of %d bytes truncated to the %d byte buffer", __func__, size, length);
@@ -4331,7 +4372,7 @@ void *exynos_camera_m9mo_picture(void *data)
 			}
 			streaming = 1;
 
-			rc = exynos_camera_m9mo_get_frame(exynos_camera, frame, &size);
+			rc = exynos_camera_m9mo_get_frame(exynos_camera, frame, &size, 1);
 			if (rc < 0)
 				goto error;
 			if (size > length) {
@@ -4364,7 +4405,8 @@ void *exynos_camera_m9mo_picture(void *data)
 		goto complete;
 	}
 
-	rc = exynos_camera_m9mo_get_frame(exynos_camera, raw ? 1 : 0, &size);
+	// No retry for a RAW shot's JPEG: the ISP is back in monitor mode by then
+	rc = exynos_camera_m9mo_get_frame(exynos_camera, raw ? 1 : 0, &size, !raw);
 	if (rc < 0)
 		goto error;
 
@@ -4418,6 +4460,9 @@ complete:
 	// And the app's flash mode, switched off for the bracket
 	if (bracket)
 		exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_FLASH_MODE, exynos_camera->flash_mode);
+
+	if (test_timer_mode)
+		exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_TIMER_MODE, 0);
 
 	// Parameters set during the capture were only stored: apply them now
 	pthread_mutex_lock(&exynos_camera->params_mutex);
