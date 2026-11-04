@@ -321,6 +321,8 @@ struct exynos_camera {
 	// applied meanwhile are applied again at that start (preview_start())
 	int after_capture;
 	int params_reapply;
+	// Preview frames left before that re-apply (capture thread)
+	int params_reapply_frames;
 
 	struct exynos_camera_callbacks callbacks;
 	// Non-zero while a HwBinder call is in the HAL: HAL threads skip their

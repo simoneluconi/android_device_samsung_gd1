@@ -778,6 +778,10 @@ void exynos_camera_stop(struct exynos_camera *exynos_camera)
 #define M9MO_BRACKET_EV_VALUES "0.3,0.6,1,1.3,1.6,2"
 // Frames per bracket shot (the ISP's AE bracket and HDR modes take three)
 #define M9MO_BRACKET_FRAMES	3
+// Preview frames after a post-capture preview start before parameters set
+// in between are applied again: the ISP ignores AE program writes right
+// after it enters monitor mode (exynos_camera_preview_start())
+#define M9MO_PARAMS_REAPPLY_FRAMES	5
 
 /*
  * ISP look and correction options. None has a default parameter: each is
@@ -2669,6 +2673,17 @@ int exynos_camera_capture(struct exynos_camera *exynos_camera)
 			ALOGE("%s: Unable to process Camera Preview", __func__);
 			goto error;
 		}
+
+#ifdef EXYNOS_M9MO
+		// The re-apply after a capture, see exynos_camera_preview_start()
+		if (exynos_camera->params_reapply_frames > 0 &&
+			--exynos_camera->params_reapply_frames == 0 && !exynos_camera->picture_enabled) {
+			pthread_mutex_lock(&exynos_camera->params_mutex);
+			if (exynos_camera_params_apply(exynos_camera, 1) < 0)
+				ALOGE("%s: Unable to apply the parameters set after the capture", __func__);
+			pthread_mutex_unlock(&exynos_camera->params_mutex);
+		}
+#endif
 	}
 
 	//Recording
@@ -3532,15 +3547,15 @@ int exynos_camera_preview_start(struct exynos_camera *exynos_camera)
 	 * the capture, or before startPreview) reached an ISP just out of
 	 * still capture. It takes the writes but keeps its old AE program:
 	 * pasm-mode, shutter, aperture and ISO set during an AE bracket left
-	 * the next shots in P. The HAL cached them as sent, so send
-	 * everything again now that the ISP is back in monitor mode.
+	 * the next shots in P. The HAL cached them as sent, so everything is
+	 * sent again, a few preview frames in (exynos_camera_capture()):
+	 * sent here, right after the STREAMON, the ISP still ignored them.
 	 */
 	pthread_mutex_lock(&exynos_camera->params_mutex);
 	exynos_camera->after_capture = 0;
 	if (exynos_camera->params_reapply) {
 		exynos_camera->params_reapply = 0;
-		if (exynos_camera_params_apply(exynos_camera, 1) < 0)
-			ALOGE("%s: Unable to apply the parameters set after the capture", __func__);
+		exynos_camera->params_reapply_frames = M9MO_PARAMS_REAPPLY_FRAMES;
 	}
 	pthread_mutex_unlock(&exynos_camera->params_mutex);
 #endif
