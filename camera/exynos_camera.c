@@ -983,8 +983,9 @@ int exynos_camera_params_init(struct exynos_camera *exynos_camera, int id)
 	 * - raw-size: the row stride in pixels and the row count; a 4160-byte
 	 *   tail follows the rows;
 	 * - raw-format: raw10be, a continuous big-endian 10-bit stream;
-	 * - raw-active-area: left,top,right,bottom; columns 0-1 and the last 64
-	 *   are zero;
+	 * - raw-active-area: left,top,right,bottom, right and bottom exclusive;
+	 *   columns 0-1 and the last 70 (4666-4735) are zero (checked on four
+	 *   frames, 2026-11-04). No optical-black margin in the frame;
 	 * - raw-black-level: from a dark frame, 63.2-63.6 on all four channels.
 	 *   The black and white levels can be overridden with
 	 *   persist.vendor.camera.raw.black and .white until they are
@@ -993,7 +994,7 @@ int exynos_camera_params_init(struct exynos_camera *exynos_camera, int id)
 	exynos_param_string_set(exynos_camera, "raw-size", "4736x3452");
 	exynos_param_string_set(exynos_camera, "raw-format", "raw10be");
 	exynos_param_string_set(exynos_camera, "raw-cfa", "grbg");
-	exynos_param_string_set(exynos_camera, "raw-active-area", "2,0,4672,3452");
+	exynos_param_string_set(exynos_camera, "raw-active-area", "2,0,4666,3452");
 	exynos_param_int_set(exynos_camera, "raw-black-level",
 		property_get_int32("persist.vendor.camera.raw.black", 64));
 	exynos_param_int_set(exynos_camera, "raw-white-level",
