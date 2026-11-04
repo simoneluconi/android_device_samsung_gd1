@@ -32,8 +32,11 @@ TARGET_REQUIRES_SYNCHRONOUS_SETSURFACE := true
 # Bluetooth
 BOARD_BLUETOOTH_BDROID_BUILDCFG_INCLUDE_DIR := $(COMMON_PATH)/bluetooth
 
-# Kernel
+# Kernel. The build sandbox would make /proc/version say nobody@android-build.
 TARGET_KERNEL_SOURCE := kernel/samsung/smdk4412
+TARGET_KERNEL_ADDITIONAL_FLAGS += \
+    KBUILD_BUILD_USER=simoneluconi \
+    KBUILD_BUILD_HOST=galaxycamerarevived
 
 # Recovery: the 8MB RECOVERY partition cannot hold the LineageOS recovery,
 # flashing is done with Odin (see docs/RECOVERY.md)

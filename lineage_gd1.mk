@@ -3,6 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
+# Version name: LineageOS only takes its own build types, so ours is an
+# UNOFFICIAL build with an id: 21-<date>-UNOFFICIAL-GalaxyCameraRevived-gd1
+TARGET_UNOFFICIAL_BUILD_ID := GalaxyCameraRevived
+
 # Release name
 PRODUCT_RELEASE_NAME := gd1
 
