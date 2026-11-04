@@ -317,6 +317,10 @@ struct exynos_camera {
 	pthread_mutex_t params_mutex;
 	// set_parameters during a capture: applied once the capture is done
 	int params_pending;
+	// From the end of a capture to the next preview start; parameters
+	// applied meanwhile are applied again at that start (preview_start())
+	int after_capture;
+	int params_reapply;
 
 	struct exynos_camera_callbacks callbacks;
 	// Non-zero while a HwBinder call is in the HAL: HAL threads skip their

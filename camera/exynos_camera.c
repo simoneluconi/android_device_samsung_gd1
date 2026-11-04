@@ -3526,6 +3526,23 @@ int exynos_camera_preview_start(struct exynos_camera *exynos_camera)
 	if (exynos_camera->zoom > 0 &&
 		exynos_v4l2_s_ctrl(exynos_camera, 0, V4L2_CID_CAMERA_ZOOM, exynos_camera->zoom) < 0)
 		ALOGE("%s: Unable to restore the zoom", __func__);
+
+	/*
+	 * Parameters applied between a capture and this preview (set during
+	 * the capture, or before startPreview) reached an ISP just out of
+	 * still capture. It takes the writes but keeps its old AE program:
+	 * pasm-mode, shutter, aperture and ISO set during an AE bracket left
+	 * the next shots in P. The HAL cached them as sent, so send
+	 * everything again now that the ISP is back in monitor mode.
+	 */
+	pthread_mutex_lock(&exynos_camera->params_mutex);
+	exynos_camera->after_capture = 0;
+	if (exynos_camera->params_reapply) {
+		exynos_camera->params_reapply = 0;
+		if (exynos_camera_params_apply(exynos_camera, 1) < 0)
+			ALOGE("%s: Unable to apply the parameters set after the capture", __func__);
+	}
+	pthread_mutex_unlock(&exynos_camera->params_mutex);
 #endif
 
 	exynos_camera->preview_enabled = 1;
@@ -4377,8 +4394,10 @@ complete:
 
 	// Parameters set during the capture were only stored: apply them now
 	pthread_mutex_lock(&exynos_camera->params_mutex);
+	exynos_camera->after_capture = 1;
 	if (exynos_camera->params_pending) {
 		exynos_camera->params_pending = 0;
+		exynos_camera->params_reapply = 1;
 		if (exynos_camera_params_apply(exynos_camera, 0) < 0)
 			ALOGE("%s: Unable to apply the parameters set during the capture", __func__);
 	}
@@ -5636,6 +5655,12 @@ int exynos_camera_set_parameters(struct camera_device *dev,
 		rc = -1;
 		goto unlock;
 	}
+
+#ifdef EXYNOS_M9MO
+	// Between a capture and the next preview: see preview_start()
+	if (exynos_camera->after_capture)
+		exynos_camera->params_reapply = 1;
+#endif
 
 	rc = 0;
 
