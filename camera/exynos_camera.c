@@ -781,7 +781,7 @@ void exynos_camera_stop(struct exynos_camera *exynos_camera)
 // Preview frames after a post-capture preview start before parameters set
 // in between are applied again: the ISP ignores AE program writes right
 // after it enters monitor mode (exynos_camera_preview_start())
-#define M9MO_PARAMS_REAPPLY_FRAMES	5
+#define M9MO_PARAMS_REAPPLY_FRAMES	15
 
 /*
  * ISP look and correction options. None has a default parameter: each is
@@ -799,7 +799,6 @@ static const struct {
 	{ "sharpness", "-2,-1,0,1,2", V4L2_CID_CAMERA_SHARPNESS, 1 },	// MON 0x20
 	{ "contrast", "-2,-1,0,1,2", V4L2_CID_CAMERA_CONTRAST, 1 },	// MON 0x25
 	{ "saturation", "-2,-1,0,1,2", V4L2_CID_CAMERA_SATURATION, 1 },	// MON 0x0F
-	{ "flash-ev", "-2,-1,0,1,2", V4L2_CID_CAMERA_SET_FLASH_EVC_STEP, 1 },	// CAPPARM 0x28
 	{ "wdr", "off,on", V4L2_CID_CAMERA_WDR, 0 },	// CAPPARM 0x2C
 	{ "lens-shading-correction", "off,on", V4L2_CID_CAMERA_LSC, 0 },	// PARM 0x07
 	{ "lens-distortion-correction", "off,on", V4L2_CID_CAMERA_LDC, 0 },	// PARM 0x1B
@@ -2675,11 +2674,21 @@ int exynos_camera_capture(struct exynos_camera *exynos_camera)
 		}
 
 #ifdef EXYNOS_M9MO
-		// The re-apply after a capture, see exynos_camera_preview_start()
+		/*
+		 * The re-apply after a capture, see exynos_camera_preview_start().
+		 * Only the AE program is sent again, as a plain change: the
+		 * cached values are invalidated and a normal apply sends those
+		 * four, the way an app's own setParameters does (which works).
+		 */
 		if (exynos_camera->params_reapply_frames > 0 &&
 			--exynos_camera->params_reapply_frames == 0 && !exynos_camera->picture_enabled) {
 			pthread_mutex_lock(&exynos_camera->params_mutex);
-			if (exynos_camera_params_apply(exynos_camera, 1) < 0)
+			exynos_camera->pasm_mode = -2;
+			exynos_camera->shutter_speed = -1;
+			exynos_camera->f_number = -1;
+			exynos_camera->iso = -1;
+			ALOGD("%s: sending the AE program again after the capture", __func__);
+			if (exynos_camera_params_apply(exynos_camera, 0) < 0)
 				ALOGE("%s: Unable to apply the parameters set after the capture", __func__);
 			pthread_mutex_unlock(&exynos_camera->params_mutex);
 		}
@@ -3555,7 +3564,9 @@ int exynos_camera_preview_start(struct exynos_camera *exynos_camera)
 	exynos_camera->after_capture = 0;
 	if (exynos_camera->params_reapply) {
 		exynos_camera->params_reapply = 0;
-		exynos_camera->params_reapply_frames = M9MO_PARAMS_REAPPLY_FRAMES;
+		// Tunable while the right delay is unknown (test property, TODO.md)
+		exynos_camera->params_reapply_frames = property_get_int32(
+			"vendor.camera.test.reapply_frames", M9MO_PARAMS_REAPPLY_FRAMES);
 	}
 	pthread_mutex_unlock(&exynos_camera->params_mutex);
 #endif
