@@ -15,18 +15,16 @@
 #
 
 #
-# Vendor properties (inherited from the i9300 mini-go tree)
+# Vendor properties (inherited from the i9300 mini-go tree), common to the
+# Galaxy Cameras. The RIL and RAM ones are in gd1.mk.
 #
 PRODUCT_PROPERTY_OVERRIDES += \
 	config.disable_atlas=true \
 	dalvik.vm.dexopt-data-only=1 \
 	dalvik.vm.dex2oat-Xmx=256m \
 	ro.sys.fw.dex2oat_thread_count=2 \
-	vendor.rild.libpath=/vendor/lib/libsecril-shim.so \
-	ro.ril.telephony.mqanelements=5 \
 	ro.sf.lcd_density=320 \
-	ro.lcd_min_brightness=20 \
-	ro.ril.telephony.nstrings=4
+	ro.lcd_min_brightness=20
 
 # Display: the panel is 720x1280 portrait, but the camera is used in
 # landscape. Rotate the primary display like stock does (SurfaceFlinger
@@ -41,18 +39,6 @@ PRODUCT_PROPERTY_OVERRIDES += \
 # Camera API
 PRODUCT_PROPERTY_OVERRIDES += \
 	persist.camera.HAL3.enabled=1
-
-# RAM optimizations
-PRODUCT_PROPERTY_OVERRIDES += \
-    ro.sys.fw.trim_enable_memory=671088640 \
-    ro.sys.fw.use_trim_settings=true \
-    ro.sys.fw.empty_app_percent=25 \
-    ro.sys.fw.trim_empty_percent=30 \
-    ro.sys.fw.trim_cache_percent=30 \
-    ro.sys.fw.bg_apps_limit=12 \
-    ro.sys.fw.bservice_limit=6 \
-    ro.sys.fw.bservice_age=5000 \
-    ro.sys.fw.bservice_enable=true
 
 # hwui
 PRODUCT_PROPERTY_OVERRIDES += \
@@ -71,10 +57,6 @@ PRODUCT_PROPERTY_OVERRIDES += \
 # Better RAM management
 PRODUCT_PROPERTY_OVERRIDES += \
 	ro.HOME_APP_ADJ=1
-
-# Low RAM mode
-PRODUCT_PROPERTY_OVERRIDES += \
-	ro.config.low_ram=true
 
 # GPS
 PRODUCT_PROPERTY_OVERRIDES += \

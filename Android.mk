@@ -5,6 +5,7 @@
 
 LOCAL_PATH := $(call my-dir)
 
-ifeq ($(TARGET_DEVICE),gd1)
+# Set by BoardConfigCommon.mk, for the GC100 and any model built on it
+ifeq ($(TARGET_GALAXYCAMERA_COMMON),true)
 include $(call all-makefiles-under,$(LOCAL_PATH))
 endif
