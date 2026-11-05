@@ -13,6 +13,10 @@ COMMON_PATH := device/samsung/gd1
 # Builds this tree's modules (Android.mk) for every model that includes it
 TARGET_GALAXYCAMERA_COMMON := true
 
+# Boot animation: autofocus brackets locking on (bootanimation/make_bootanimation.py),
+# in place of LineageOS's
+TARGET_BOOTANIMATION := $(COMMON_PATH)/bootanimation/bootanimation.zip
+
 # Wifi
 WIFI_DRIVER_MODULE_PATH :=
 
