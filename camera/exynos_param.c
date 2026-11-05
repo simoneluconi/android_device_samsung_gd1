@@ -257,7 +257,9 @@ int exynos_param_data_get(struct exynos_camera *exynos_camera, char *key,
 		return -EINVAL;
 
 	param = exynos_param_find_key(exynos_camera, key);
-	if (param == NULL || param->type != type)
+	if (param == NULL)
+		return -ENOENT;
+	if (param->type != type)
 		return -1;
 
 	memcpy(data, &param->data, sizeof(param->data));
@@ -311,7 +313,12 @@ char *exynos_param_string_get(struct exynos_camera *exynos_camera,
 		return NULL;
 
 	rc = exynos_param_data_get(exynos_camera, key, &data, EXYNOS_PARAM_STRING);
-	if (rc < 0) {
+	if (rc == -ENOENT) {
+		// Optional keys a preset leaves unset (scene-mode, antibanding,
+		// AE/AWB lock...) are read on every setParameters
+		ALOGV("%s: No key %s", __func__, key);
+		return NULL;
+	} else if (rc < 0) {
 		ALOGE("%s: Unable to get data for key %s", __func__, key);
 		return NULL;
 	}
