@@ -31,6 +31,11 @@ typedef struct {
     float   elevation;
     /** Azimuth of SV in degrees. */
     float   azimuth;
+    /**
+     * Samsung extension: the GC100 HAL reports size = 24 for each entry.
+     * Without this field every entry after the first was read 4 bytes off.
+     */
+    int     samsung_extra;
 } GpsSvInfo_vendor;
 
 typedef struct {

@@ -112,13 +112,16 @@ static void log_gpsStatus_vendor(char* func, GpsStatus* status) {
 }
 
 static void copy_sv_info_from_vendor(GpsSvStatus_vendor source, GpsSvStatus* target) {
-    target->size = source.size;
-    target->num_svs = source.num_svs;
+    int num_svs = source.num_svs < 0 ? 0 :
+        (source.num_svs > GPS_MAX_SVS ? GPS_MAX_SVS : source.num_svs);
+
+    target->size = sizeof(GpsSvStatus);
+    target->num_svs = num_svs;
     target->ephemeris_mask = source.ephemeris_mask;
     target->almanac_mask = source.almanac_mask;
     target->used_in_fix_mask = source.used_in_fix_mask;
-    for (int index = 0; index < source.num_svs; index++) {
-	target->sv_list[index].size = source.sv_list[index].size;
+    for (int index = 0; index < num_svs; index++) {
+        target->sv_list[index].size = sizeof(GpsSvInfo);
         target->sv_list[index].prn = source.sv_list[index].prn;
         target->sv_list[index].snr = source.sv_list[index].snr;
         target->sv_list[index].elevation = source.sv_list[index].elevation;
@@ -230,15 +233,16 @@ static void shim_sv_status_cb(GpsSvStatus* sv_info) {
        gpsSvStatus_vendor_info->ephemeris_mask,
        gpsSvStatus_vendor_info->almanac_mask,
        gpsSvStatus_vendor_info->used_in_fix_mask);
-    for (int index = 0; index < sv_info->num_svs; index++) {
-        ALOGD("%s:   svinfo[%d] - size=%d prn=%d snr=%f elevation=%f azimuth=%f",
+    for (int index = 0; index < gpsSvStatus_vendor_info->num_svs && index < GPS_MAX_SVS; index++) {
+        ALOGD("%s:   svinfo[%d] - size=%d prn=%d snr=%f elevation=%f azimuth=%f extra=%d",
             __func__,
             index,
             gpsSvStatus_vendor_info->sv_list[index].size,
             gpsSvStatus_vendor_info->sv_list[index].prn,
             gpsSvStatus_vendor_info->sv_list[index].snr,
             gpsSvStatus_vendor_info->sv_list[index].elevation,
-            gpsSvStatus_vendor_info->sv_list[index].azimuth);
+            gpsSvStatus_vendor_info->sv_list[index].azimuth,
+            gpsSvStatus_vendor_info->sv_list[index].samsung_extra);
     }
 
     copy_sv_info_from_vendor(*gpsSvStatus_vendor_info, &gpsSvStatus_info);
