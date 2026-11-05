@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    DeviceConfig flags that SimpleDeviceConfig applies at every boot, after
+    LineageOS's configs_base.
+-->
+<resources>
+    <string-array name="configs_device">
+        <!-- No privacy indicator dots for camera, microphone and location
+             (user, 2026-11-05): GC Camera's own status bar shows what it
+             uses, and an app cannot opt out of them. LineageOS turns the
+             location one on in configs_base. -->
+        <item>privacy/camera_mic_icons_enabled=false</item>
+        <item>privacy/location_indicators_enabled=false</item>
+    </string-array>
+</resources>
