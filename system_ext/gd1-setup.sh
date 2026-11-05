@@ -7,6 +7,7 @@
 #   overridden in the build like the plain system apps (see RemovePackages).
 # - Apply the camera-first quick settings tiles, the Rome time zone, the
 #   24-hour clock and the battery percentage once.
+# - Turn the privacy indicator dots off.
 # Runs on every boot; all steps are no-ops once done. Output: logcat -s gd1-setup
 # Never disable com.android.sdksandbox: PackageManagerService requires it
 # and system_server crashes at boot without it.
@@ -26,6 +27,13 @@ done
 
 settings put global device_provisioned 1
 settings put secure user_setup_complete 1
+
+# No privacy indicator dots for camera, microphone and location (user,
+# 2026-11-05): GC Camera's own status bar shows what it uses, and an app
+# cannot opt out of them. They are DeviceConfig flags, so no prop or overlay
+# sets them.
+device_config put privacy camera_mic_icons_enabled false
+device_config put privacy location_indicators_enabled false
 
 if [ "$(settings get secure gd1_firstboot_done)" != 1 ]; then
     # SystemUI keeps the tile list in memory and writes it straight back over
