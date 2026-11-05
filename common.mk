@@ -41,7 +41,8 @@ PRODUCT_PACKAGES += \
     libgpsd_shim
 
 PRODUCT_COPY_FILES += \
-    $(COMMON_PATH)/configs/gps.xml:$(TARGET_COPY_OUT_VENDOR)/etc/gps.xml
+    $(COMMON_PATH)/configs/gps.xml:$(TARGET_COPY_OUT_VENDOR)/etc/gps.xml \
+    $(COMMON_PATH)/configs/gps_debug.conf:$(TARGET_COPY_OUT_VENDOR)/etc/gps_debug.conf
 
 # Sensors (LSM330 accelerometer and gyroscope, AK8963C compass)
 PRODUCT_PACKAGES += \
