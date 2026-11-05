@@ -2,7 +2,8 @@
 <!--
      BCM4752 daemon configuration, from the GC100 stock /system/etc/gps_4752.xml.
      Changed: SensorsEnable="false" (the daemon's Android 4.1 sensor API is
-     stubbed by libgpsd_shim), and the certificate and log paths.
+     stubbed by libgpsd_shim), the certificate path, and the data and log
+     paths (/data/vendor/gps instead of /data/gps).
 -->
 <glgps xmlns="http://www.glpals.com/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.glpals.com/glconfig.xsd" >
   <!--HAL Confguration  -->
@@ -11,11 +12,11 @@
        lBaudRate="921600"
        gpioNStdbyPath="/sys/class/sec/gps/GPS_PWR_EN/value"
        gpioDelayMs="250"
-       acNvStoDir="/data/gps/"
-       FactoryTestFilePath="/data/gps/"
+       acNvStoDir="/data/vendor/gps/"
+       FactoryTestFilePath="/data/vendor/gps/"
 
        Log="JAVA"
-       acLogDirectory="/data/gps/log"
+       acLogDirectory="/data/vendor/gps/log"
 
        TISEnabled="true"
        LPmode="false"
@@ -44,10 +45,10 @@
        LbsSyncLto="false"
        SyncLto="true"
        ltoFileName="lto2.dat"
-       acLtoDir="/data/gps/"
+       acLtoDir="/data/vendor/gps/"
        LbsSyncLtoThresholdDays="1"
        LbsTAC="10101106"
-       ctrlPipe="/data/gps/glgpsctrl"
+       ctrlPipe="/data/vendor/gps/glgpsctrl"
        LbsWlanEnable="false"
 
        IgnoreJniTime="true"

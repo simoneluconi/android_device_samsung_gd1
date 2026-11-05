@@ -51,6 +51,11 @@ on boot
 # reach its deep idle states; ondemand keeps all four cores online
     write /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor pegasusq
 
+# Background apps get ~5% of a busy CPU against the foreground (Android's
+# old bg_non_interactive value). Android 14's task profiles never set
+# cpu.shares on the v1 cpu controller, so it stayed at 1024 like foreground.
+    write /dev/cpuctl/background/cpu.shares 52
+
 on property:sys.boot_completed=1
     setprop sys.usb.configfs 1
     setprop vendor.gd1.boot_completed 1
@@ -91,9 +96,11 @@ on post-fs-data
 # Restorecon
     restorecon_recursive /efs
 
-# GPS init
-    mkdir /data/gps 0771 gps system
-    mkdir /data/gps/log 0770 gps system
+# GPS init: the daemon's data (LTO, last position, logs; see gps.xml) under
+# /data/vendor. Its pipes to the HAL stay in /data itself, hardcoded in both
+# blobs (/data/.gps.interface.pipe.*).
+    mkdir /data/vendor/gps 0771 gps system
+    mkdir /data/vendor/gps/log 0770 gps system
 
     write /data/.cid.info 0
     restorecon /data/.cid.info

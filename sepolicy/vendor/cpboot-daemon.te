@@ -6,3 +6,6 @@ type cpboot-daemon_exec, exec_type, vendor_file_type, file_type;
 
 init_daemon_domain(cpboot-daemon)
 permissive cpboot-daemon;
+
+# The modem nodes (file_contexts); rild gets them as hal_telephony_server
+allow cpboot-daemon radio_device:chr_file rw_file_perms;
