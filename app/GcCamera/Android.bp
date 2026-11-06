@@ -1,0 +1,32 @@
+//
+// Copyright (C) 2026 The GalaxyCameraRevived Project
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+
+package {
+    default_applicable_licenses: ["device_samsung_gd1_license"],
+}
+
+// GC Camera, the camera app (camera-app/app in the GalaxyCameraRevived repo).
+// The APK is our release build, signed with the key we sideload with, so `pm install -r`
+// updates keep working on top of the system copy. Refresh it with tools/update-camera-prebuilt.sh.
+android_app_import {
+    name: "GcCamera",
+    apk: "GcCamera.apk",
+    presigned: true,
+    // Signed with v2, which the build must not touch (targetSdk >= 30)
+    preprocessed: true,
+    dex_preopt: {
+        enabled: true,
+    },
+    required: ["default-permissions_com.simoneluconi.gccamera.xml"],
+}
+
+// The camera, and the location for geotagging, without a first-run prompt. Geotagging itself
+// stays off until the user turns it on in the app
+prebuilt_etc {
+    name: "default-permissions_com.simoneluconi.gccamera.xml",
+    src: "default-permissions_com.simoneluconi.gccamera.xml",
+    sub_dir: "default-permissions",
+}

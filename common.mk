@@ -56,9 +56,11 @@ PRODUCT_PACKAGES += \
 PRODUCT_PACKAGES += \
     camera.smdk4x12
 
-# Camera-first app set (see RemovePackages/Android.mk). GcGallery replaces
-# Glimpse; the home layout (overlay/packages/apps/Trebuchet) shows it.
+# Camera-first app set (see RemovePackages/Android.mk). GcCamera replaces
+# OpenCamera and GcGallery replaces Glimpse; the home layout
+# (overlay/packages/apps/Trebuchet) shows both.
 PRODUCT_PACKAGES += \
+    GcCamera \
     GcGallery \
     RemovePackages
 PRODUCT_COPY_FILES += \
