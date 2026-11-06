@@ -6,7 +6,9 @@
 #   and USB state, so a failed boot can be read back from the mini recovery.
 
 D=/data/bringup
+# Root only: the dumps hold getprop, with the serial and the Wi-Fi MAC
 mkdir -p $D/last_kmsg
+chmod -R go-rwx $D
 stamp=$(date +%Y%m%d-%H%M%S)
 cp /proc/last_kmsg $D/last_kmsg/last_kmsg-$stamp.txt
 ls -1t $D/last_kmsg/last_kmsg-*.txt | tail -n +11 | while read f; do rm -f "$f"; done
@@ -30,6 +32,6 @@ for i in 1 2 3 4 5 6 7 8 9; do
         getprop
     } > $D/state-$i.txt 2>&1
     dmesg > $D/dmesg-$i.txt 2>&1
-    chmod -R a+rX $D
+    chmod -R go-rwx $D
     sleep 20
 done
