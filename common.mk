@@ -15,6 +15,11 @@ COMMON_PATH := device/samsung/gd1
 # /vendor/param.lfs over it on first boot.
 SMDK4412_NO_PARAM_SCRIPT := true
 
+# Off-mode charging must not suspend: right after a resume there, processes
+# crash (ueventd segfaults, BoringSSL self-tests fail), and after four
+# ueventd crashes init reboots to the bootloader, i.e. download mode.
+SMDK4412_CHARGER_NO_SUSPEND := true
+
 # Overlay
 DEVICE_PACKAGE_OVERLAYS += $(COMMON_PATH)/overlay
 
