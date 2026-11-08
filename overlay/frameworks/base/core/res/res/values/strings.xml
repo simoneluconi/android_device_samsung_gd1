@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The boot dialog names the device: it is a camera, not a phone -->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <string name="android_upgrading_title" product="default">Camera is updating…</string>
+    <string name="android_start_title" product="default">Camera is starting…</string>
+</resources>
