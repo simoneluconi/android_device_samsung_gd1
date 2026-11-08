@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The charging ripple starts at the USB port: on the GC100 it is on the
+         right edge, in the display's natural (landscape) orientation -->
+    <item name="physical_charger_port_location_normalized_x" type="dimen" format="float">1</item>
+    <item name="physical_charger_port_location_normalized_y" type="dimen" format="float">0.5</item>
+</resources>
