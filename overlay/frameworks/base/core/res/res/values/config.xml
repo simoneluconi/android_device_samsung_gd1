@@ -441,4 +441,14 @@
 
     <!-- A camera turns on straight into use: no lock screen by default -->
     <bool name="config_disableLockscreenByDefault">true</bool>
+
+    <!-- Power menu without the emergency call: the camera has no voice calls -->
+    <string-array translatable="false" name="config_globalActionsList">
+        <item>lockdown</item>
+        <item>power</item>
+        <item>restart</item>
+        <item>logout</item>
+        <item>screenshot</item>
+        <item>bugreport</item>
+    </string-array>
 </resources>

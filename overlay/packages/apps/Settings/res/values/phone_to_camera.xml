@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Settings calls the device a camera, not a phone. Generated from
+     res-product's product="default" strings; numbers and calls keep "phone". -->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <string name="bluetooth_disconnect_all_profiles">Your camera will disconnect from "<xliff:g id="device_name">%1$s</xliff:g>."</string>
+    <string name="bluetooth_footer_mac_message">Camera\'s Bluetooth address: <xliff:g id="bluetooth_mac_address">%1$s</xliff:g></string>
+    <string name="bluetooth_ask_discovery"><xliff:g id="app_name">%1$s</xliff:g> wants to make your camera visible to other Bluetooth devices for <xliff:g id="timeout">%2$d</xliff:g> seconds.</string>
+    <string name="bluetooth_ask_discovery_no_name">An app wants to make your camera visible to other Bluetooth devices for <xliff:g id="timeout">%1$d</xliff:g> seconds.</string>
+    <string name="bluetooth_ask_lasting_discovery"><xliff:g id="app_name">%1$s</xliff:g> wants to make your camera visible to other Bluetooth devices. You can change this later in Bluetooth settings.</string>
+    <string name="bluetooth_ask_lasting_discovery_no_name">An app wants to make your camera visible to other Bluetooth devices. You can change this later in Bluetooth settings.</string>
+    <string name="bluetooth_ask_enablement_and_discovery"><xliff:g id="app_name">%1$s</xliff:g> wants to turn on Bluetooth and make your camera visible to other devices for <xliff:g id="timeout">%2$d</xliff:g> seconds.</string>
+    <string name="bluetooth_ask_enablement_and_discovery_no_name">An app wants to turn on Bluetooth and make your camera visible to other devices for <xliff:g id="timeout">%1$d</xliff:g> seconds.</string>
+    <string name="bluetooth_ask_enablement_and_lasting_discovery"><xliff:g id="app_name">%1$s</xliff:g> wants to turn on Bluetooth and make your camera visible to other devices. You can change this later in Bluetooth settings.</string>
+    <string name="bluetooth_ask_enablement_and_lasting_discovery_no_name">An app wants to turn on Bluetooth and make your camera visible to other devices. You can change this later in Bluetooth settings.</string>
+    <string name="encryption_and_credential_settings_summary">Camera encrypted</string>
+    <string name="not_encrypted_summary">Camera not encrypted</string>
+    <string name="security_settings_face_enroll_introduction_message">Use your face to unlock your camera, authorize purchases, or sign in to apps.</string>
+    <string name="security_settings_face_enroll_introduction_message_class3">Use your face to unlock your camera or for authentication in apps, like when you sign in to apps or approve a purchase.</string>
+    <string name="security_settings_face_enroll_introduction_consent_message_0">Allow your child to use their face to unlock their camera</string>
+    <string name="security_settings_face_enroll_introduction_consent_message_0_class3">Allow your child to use their face to unlock their camera or verify it\u2019s them. This happens when they sign in to apps, approve a purchase, and more.</string>
+    <string name="security_settings_face_enroll_introduction_consent_message">Using your child\u2019s face to unlock their camera may be less secure than a strong pattern or PIN.</string>
+    <string name="security_settings_face_settings_footer">Use your face to unlock your camera or for authentication in apps, like when you sign in or approve a purchase.\n\nKeep in mind:\nYou can only have one face set up at a time. To add another face, delete the current one.\n\nLooking at the camera can unlock it when you don\u2019t intend to.\n\nYour camera can be unlocked by someone else if it\u2019s held up to your face.\n\nYour camera can be unlocked by someone who looks a lot like you, like an identical sibling.</string>
+    <string name="security_settings_face_settings_footer_attention_not_supported">Use your face to unlock your camera or for authentication in apps, like when you sign in or approve a purchase.\n\nKeep in mind:\nYou can only have one face set up at a time. To add another face, delete the current one.\n\nLooking at the camera can unlock it when you don\u2019t intend to.\n\nYour camera can be unlocked by someone else if it\u2019s held up to your face, even if your eyes are closed.\n\nYour camera can be unlocked by someone who looks a lot like you, like an identical sibling.</string>
+    <string name="security_settings_face_settings_footer_class3">Use your face to unlock your camera or verify it\u2019s you, like when you sign in to apps or approve a purchase.\n\nKeep in mind:\nYou can only have one face set up at a time. To add another face, delete the current one.\n\nLooking at the camera can unlock it when you don\u2019t intend to.\n\nYour camera can be unlocked by someone else if it\u2019s held up to your face.\n\nYour camera can be unlocked by someone who looks a lot like you, like an identical sibling.</string>
+    <string name="security_settings_face_settings_footer_class3_attention_not_supported">Use your face to unlock your camera or verify it\u2019s you, like when you sign in to apps or approve a purchase.\n\nKeep in mind:\nYou can only have one face set up at a time. To add another face, delete the current one.\n\nLooking at the camera can unlock it when you don\u2019t intend to.\n\nYour camera can be unlocked by someone else if it\u2019s held up to your face, even if your eyes are closed.\n\nYour camera can be unlocked by someone who looks a lot like you, like an identical sibling.</string>
+    <string name="security_settings_fingerprint_enroll_introduction_consent_message">Allow your child to use their fingerprint to unlock their camera or verify it\u2019s them. This happens when they sign in to apps, approve a purchase, and more.</string>
+    <string name="security_settings_fingerprint_v2_enroll_introduction_footer_message_1">Using your fingerprint to unlock your camera may be less secure than a strong pattern or PIN</string>
+    <string name="security_settings_fingerprint_v2_enroll_introduction_footer_message_3">When you use Pixel Imprint, images are used to update your fingerprint model. Images used to create your fingerprint model are never stored, but the fingerprint model is stored securely on your camera and never leaves the camera. All processing occurs securely on your camera.</string>
+    <string name="security_settings_fingerprint_v2_enroll_introduction_footer_message_consent_3">When they use Pixel Imprint, images are used to update their fingerprint model. Images used to create your child\u2019s fingerprint model are never stored, but the fingerprint model is stored securely on the camera and never leaves the camera. All processing occurs securely on the camera.</string>
+    <string name="security_settings_fingerprint_v2_enroll_introduction_footer_message_4">You can delete your fingerprint images and model, or turn off Fingerprint Unlock at any time in Settings. Fingerprint images and models are stored on the camera until you delete them.</string>
+    <string name="security_settings_fingerprint_v2_enroll_introduction_footer_message_consent_4">You and your child can delete their fingerprint images and model, or turn off Fingerprint Unlock at any time in Settings. Fingerprint images and models are stored on the camera until they\u2019re deleted.</string>
+    <string name="security_settings_fingerprint_v2_enroll_introduction_footer_message_5">Your camera can be unlocked when you don\u2019t intend to, like if someone holds it up to your finger.</string>
+    <string name="security_settings_fingerprint_v2_enroll_introduction_footer_message_consent_5">Your child\u2019s camera can be unlocked when they don\u2019t intend to, like if someone holds it up to their finger.</string>
+    <string name="security_settings_fingerprint_v2_home_screen_text">Use your fingerprint to unlock your camera or verify it\u2019s you, like when you sign in to apps</string>
+    <string name="biometric_settings_hand_back_to_guardian">Hand the camera back to your parent</string>
+    <string name="lock_screen_intro_skip_dialog_text_frp">Device protection features won\u2019t be turned on. You won\u2019t be able to prevent others from using this camera if it\u2019s lost, stolen or reset.</string>
+    <string name="lock_screen_intro_skip_dialog_text">Device protection features won\u2019t be turned on. You won\u2019t be able to prevent others from using this camera if it\u2019s lost or stolen.</string>
+    <string name="security_settings_sfps_enroll_find_sensor_message">The fingerprint sensor is on the power button. It’s the flat button next to the raised volume button on the edge of the camera.</string>
+    <string name="security_settings_fingerprint_enroll_finish_v2_message">Now you can use your fingerprint to unlock your camera or verify it\u2019s you, like when you sign in to apps or approve a purchase</string>
+    <string name="security_settings_fingerprint_enroll_finish_v2_add_fingerprint_message">Now you can use your fingerprint to unlock your camera or verify it\u2019s you, like when you sign in to apps or approve a purchase.\n\nAdd another fingerprint so it\u2019s easier to unlock when you hold your camera in different ways.</string>
+    <string name="lock_screen_pin_skip_message">A PIN protects the camera if it\u2019s lost or stolen</string>
+    <string name="lock_screen_pattern_skip_message">A pattern protects the camera if it\u2019s lost or stolen</string>
+    <string name="lock_screen_password_skip_message">A password protects the camera if it\u2019s lost or stolen</string>
+    <string name="lock_screen_pin_skip_fingerprint_message">A PIN is required to set up Fingerprint Unlock.\n\nA PIN protects the camera if it\u2019s lost or stolen.</string>
+    <string name="lock_screen_pattern_skip_fingerprint_message">A pattern is required to set up Fingerprint Unlock.\n\nA pattern protects the camera if it\u2019s lost or stolen.</string>
+    <string name="lock_screen_password_skip_fingerprint_message">A password is required to set up Fingerprint Unlock.\n\nA password protects the camera if it\u2019s lost or stolen.</string>
+    <string name="lock_screen_pin_skip_face_message">A PIN is required to set up Face Unlock.\n\nA PIN protects the camera if it\u2019s lost or stolen.</string>
+    <string name="lock_screen_pattern_skip_face_message">A pattern is required to set up Face Unlock.\n\nA pattern protects the camera if it\u2019s lost or stolen.</string>
+    <string name="lock_screen_password_skip_face_message">A password is required to set up Face Unlock.\n\nA password protects the camera if it\u2019s lost or stolen.</string>
+    <string name="lock_screen_pin_skip_biometrics_message">A PIN is required to set up Face Unlock and Fingerprint Unlock.\n\nA PIN protects the camera if it\u2019s lost or stolen.</string>
+    <string name="lock_screen_pattern_skip_biometrics_message">A pattern is required to set up Face Unlock and Fingerprint Unlock.\n\nA pattern protects the camera if it\u2019s lost or stolen.</string>
+    <string name="lock_screen_password_skip_biometrics_message">A password is required to set up Face Unlock and Fingerprint Unlock.\n\nA password protects the camera if it\u2019s lost or stolen.</string>
+    <string name="fingerprint_v2_delete_message">This deletes the fingerprint images and model associated with \'<xliff:g id="fingerprint_id" example="Fingerprint 2">%1$s</xliff:g>\' that are stored on your camera</string>
+    <string name="fingerprint_last_delete_message">You won\'t be able to use your fingerprint to unlock your camera or verify it\'s you in apps.</string>
+    <string name="fingerprint_unlock_title">You can unlock your camera using your fingerprint. For security, this option requires a backup screen lock.</string>
+    <string name="face_unlock_title">You can unlock your camera using your face. For security, this option requires a backup screen lock.</string>
+    <string name="biometrics_unlock_title">You can unlock your camera using your face or fingerprint. For security, this option requires a backup screen lock.</string>
+    <string name="encrypt_title">Encrypt camera</string>
+    <string name="suggested_lock_settings_summary">Set screen lock to protect camera</string>
+    <string name="setup_lock_settings_picker_title">Protect your camera</string>
+    <string name="setup_lock_settings_picker_message">Prevent others from using this camera without your permission by activating device protection features. Choose the screen lock you want to use.</string>
+    <string name="bluetooth_unpair_dialog_body">Your camera will no longer be paired with <xliff:g id="device_name">%1$s</xliff:g></string>
+    <string name="wifi_add_app_single_network_summary"><xliff:g id="appName" example="ThirdPartyAppName">%1$s</xliff:g> wants to save a network to your camera</string>
+    <string name="wifi_add_app_networks_summary"><xliff:g id="appName" example="ThirdPartyAppName">%1$s</xliff:g> wants to save these networks to your camera</string>
+    <string name="auto_rotate_screen_summary">Automatically adjust the screen orientation when you move your camera between portrait and landscape</string>
+    <string name="sim_lock_on">Require PIN to use camera</string>
+    <string name="sim_lock_off">Require PIN to use camera</string>
+    <string name="storage_wizard_init_v2_internal_summary">Store apps \u0026 media to use on this camera only. &lt;a href="https://support.google.com/android/answer/12153449"&gt;Learn more about setting up an SD card&lt;/a&gt;.</string>
+    <string name="storage_wizard_migrate_v2_body">You can move files, media, and certain apps to this <xliff:g id="name" example="SanDisk SD card">^1</xliff:g>.
+\n\nThis move will free up <xliff:g id="size" example="3 GB">^2</xliff:g> of your camera\u2019s storage and should take around <xliff:g id="duration" example="3 minutes">^3</xliff:g>.</string>
+    <string name="storage_wizard_migrate_v2_checklist_battery">Keep this camera charged</string>
+    <string name="main_clear_desc">"This will erase all data from your camera\u2019s <b>internal storage</b>, including:\n\n<li>Your Google Account</li>\n<li>System and app data and settings</li>\n<li>Downloaded apps</li>"</string>
+    <string name="usb_tethering_subtext">Share camera\u2019s internet connection via USB</string>
+    <string name="bluetooth_tethering_subtext">Share camera\u2019s internet connection via Bluetooth</string>
+    <string name="ethernet_tethering_subtext">Share camera\u2019s internet connection via Ethernet</string>
+    <string name="about_settings">About camera</string>
+    <string name="install_all_warning">
+        Your camera and personal data are more vulnerable
+        to attack by unknown apps. By installing apps from
+        this source, you agree that you are responsible for
+        any damage to your camera or loss of data that may
+        result from their use.
+    </string>
+    <string name="runningservicedetails_stop_dlg_text">If you stop this service, some
+        features of your camera may stop working correctly until you power it off
+        and then on again.</string>
+    <string name="accessibility_text_reading_confirm_dialog_message">Your display size and text preferences will reset to the camera\u2019s original settings</string>
+    <string name="accessibility_daltonizer_about_intro_text">Adjust how colors display on your camera</string>
+    <string name="reduce_bright_colors_preference_summary">Dim screen beyond your camera\u2019s minimum brightness</string>
+    <string name="reduce_bright_colors_preference_subtitle">
+        <![CDATA[Extra dim can be helpful when:
+        <ol>
+            <li>\u00a0Your camera\u2019s default minimum brightness is still too bright</li>
+            <li>\u00a0You\u2019re using your camera in dark situations, like at night or in a dark room before bed</li>
+        </ol>
+        ]]>
+    </string>
+    <string name="battery_tip_summary_summary">Camera has typical background battery usage</string>
+    <string name="battery_tip_limited_temporarily_dialog_msg">In certain conditions, like high temperatures and long charging periods, charging may be limited to <xliff:g id="percent" example="50%">%1$s</xliff:g> to help preserve battery health.\n\nWhen those conditions end, your camera will automatically charge normally.</string>
+    <string name="battery_tip_dialog_message">Because you’ve used your camera more than usual, your battery may run out sooner than it normally would.\n\nApps using most battery:</string>
+    <string name="battery_tip_dialog_summary_message">Your apps are using a normal amount of battery. If apps use too much battery, your camera will suggest actions you can take.\n\nYou can always turn on Battery Saver if you\u2019re running low on battery.</string>
+    <string name="battery_usage_screen_footer">Battery usage and screen time are not measured while the camera is charging</string>
+    <string name="really_remove_account_message">Removing this account will delete all of its messages, contacts, and other data from the camera!</string>
+    <string name="data_usage_auto_sync_on_dialog">Any changes you make to your accounts on the web will be automatically copied to your camera.\n\nSome accounts may also automatically copy any changes you make on the camera to the web. A Google Account works this way.</string>
+    <string name="data_usage_limit_dialog_mobile">Your camera will turn off mobile data once it reaches the limit you set.\n\nSince data usage is measured by your camera, and your carrier may account for usage differently, consider setting a conservative limit.</string>
+    <string name="user_settings_footer_text">Share your camera by adding new users. Each user has a personal space on your camera for custom Home screens, accounts, apps, settings, and more.</string>
+    <string name="user_cannot_manage_message">Only the camera\u2019s owner can manage users.</string>
+    <string name="user_confirm_remove_self_message">You will lose your space and data on this camera. You can\u2019t undo this action.</string>
+    <string name="ambient_display_title">Double-tap to check camera</string>
+    <string name="ambient_display_pickup_title">Lift to check camera</string>
+    <string name="ambient_display_pickup_summary">To check time, notifications, and other info, pick up your camera.</string>
+    <string name="ambient_display_tap_screen_title">Tap to check camera</string>
+    <string name="fingerprint_swipe_for_notifications_summary">To check your notifications, swipe down on the fingerprint sensor on the back of your camera.</string>
+    <string name="no_5g_in_dsds_text">When using 2 SIMs, this camera will be limited to 4G. <annotation id="url">Learn more</annotation></string>
+    <string name="lockpassword_confirm_your_pattern_details_frp">Your camera was reset to factory settings. To use this camera, enter your previous pattern.</string>
+    <string name="lockpassword_confirm_your_pin_details_frp">Your camera was reset to factory settings. To use this camera, enter your previous PIN.</string>
+    <string name="lockpassword_confirm_your_password_details_frp">Your camera was reset to factory settings. To use this camera, enter your previous password.</string>
+    <string name="battery_tip_incompatible_charging_message">Your camera may be charging slowly or not charging. For faster charging, use a recommended cable and adapter.</string>
+    <string name="lockscreen_trivial_controls_summary">Without unlocking your camera</string>
+    <string name="auto_rotate_summary_a11y">When you move your camera between portrait and landscape</string>
+    <string name="daltonizer_feature_summary">Adjust how colors display on your camera</string>
+    <string name="spatial_audio_speaker">Camera speakers</string>
+    <string name="bluetooth_audio_routing_summary">Route sounds to your hearing device or camera speaker</string>
+    <string name="wifi_hidden_network_warning">If your router is not broadcasting a network ID but you would like to connect to it in the future, you can set the network as hidden.\n\nThis may create a security risk because your camera will regularly broadcast its signal to find the network.\n\nSetting the network as hidden will not change your router settings.</string>
+    <string name="style_suggestion_title">Customize your camera</string>
+    <string name="activity_not_found">Application is not installed on your camera.</string>
+    <string name="zen_mode_automation_suggestion_title">Silence camera at certain times</string>
+    <string name="zen_mode_restrict_notifications_mute_footer">When notifications arrive, your camera won\u2019t make a sound or vibrate.</string>
+    <string name="zen_mode_restrict_notifications_hide_footer">Your camera won\u2019t show, vibrate or make sound for new or existing notifications. Keep in mind, critical notifications for device activity and status will still appear.\n\nWhen you turn off Do Not Disturb, find missed notifications by swiping down from the top of your screen.</string>
+    <string name="usb_default_info">When another device is connected and your camera is unlocked, these settings will be applied. Only connect to trusted devices.</string>
+    <string name="condition_zen_summary_phone_muted">Camera muted</string>
+    <string name="disabled_feature_reason_slow_down_phone">This feature has been turned off because it slows down your camera</string>
+</resources>

@@ -35,5 +35,9 @@
     <string name="quick_settings_tiles_default" translatable="false">
         internet,bt,airplane,rotation,location,battery,dark,caffeine
     </string>
+
+    <!-- A camera powers itself off when left asleep: after 6 hours, settable in
+         Settings > Battery -->
+    <integer name="config_autoPowerOffTimeout">21600000</integer>
 </resources>
 
