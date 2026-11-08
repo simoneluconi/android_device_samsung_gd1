@@ -1,0 +1,7 @@
+# hdmisplash, the HDMI placeholder screen (hdmisplash/).
+# Permissive like the rest of the device policy (docs/TODO.md).
+type hdmisplash, domain;
+type hdmisplash_exec, exec_type, vendor_file_type, file_type;
+
+init_daemon_domain(hdmisplash)
+permissive hdmisplash;

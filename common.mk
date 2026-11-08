@@ -61,6 +61,10 @@ PRODUCT_PACKAGES += \
 PRODUCT_PACKAGES += \
     camera.smdk4x12
 
+# Micro-HDMI: a placeholder screen until there is real HDMI support
+PRODUCT_PACKAGES += \
+    hdmisplash
+
 # Camera-first app set (see RemovePackages/Android.mk). GcCamera replaces
 # OpenCamera and GcGallery replaces Glimpse; the home layout
 # (overlay/packages/apps/Trebuchet) shows both.

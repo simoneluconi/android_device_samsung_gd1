@@ -1,0 +1,8 @@
+// HDMI placeholder screen: shows "support is coming" on a connected TV
+cc_binary {
+    name: "hdmisplash",
+    vendor: true,
+    srcs: ["hdmisplash.c"],
+    shared_libs: ["liblog"],
+    init_rc: ["hdmisplash.rc"],
+}

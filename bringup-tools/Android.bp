@@ -13,3 +13,9 @@ cc_binary {
     srcs: ["ffstest.cpp"],
     installable: false,
 }
+
+cc_binary {
+    name: "gd1_hdmitest",
+    srcs: ["hdmitest.c"],
+    installable: false,
+}
