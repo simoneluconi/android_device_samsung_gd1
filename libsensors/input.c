@@ -21,6 +21,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <dirent.h>
+#include <time.h>
 #include <linux/ioctl.h>
 #include <linux/input.h>
 #include <linux/uinput.h>
@@ -52,12 +53,28 @@ int64_t timestamp(struct timeval *time)
 	return time->tv_sec * 1000000000LL + time->tv_usec * 1000;
 }
 
+static int64_t timespec_ns(struct timespec *t)
+{
+	return t->tv_sec * 1000000000LL + t->tv_nsec;
+}
+
+/*
+ * evdev stamps events with CLOCK_REALTIME, and the 3.4 kernel only lets
+ * userspace switch it to CLOCK_MONOTONIC (EVIOCSCLOCKID), while Android
+ * wants sensor timestamps in CLOCK_BOOTTIME (elapsedRealtimeNanos). Shift
+ * each event by the current difference between the two clocks.
+ */
 int64_t input_timestamp(struct input_event *event)
 {
+	struct timespec realtime, boottime;
+
 	if (event == NULL)
 		return -1;
 
-	return timestamp(&event->time);
+	clock_gettime(CLOCK_REALTIME, &realtime);
+	clock_gettime(CLOCK_BOOTTIME, &boottime);
+
+	return timestamp(&event->time) + timespec_ns(&boottime) - timespec_ns(&realtime);
 }
 
 int uinput_rel_create(const char *name)
