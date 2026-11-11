@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-FileCopyrightText: 2026 The GalaxyCameraRevived Project
+     SPDX-License-Identifier: Apache-2.0
+-->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <!--
+        Fall back to 2.4 GHz when a 5 GHz access point rejects us.
+
+        On both the GC100 and the GC200 a 5 GHz join fails at the 802.11
+        auth step ("authentication failure, no ack", association rejection
+        status 1), with our stack and with Samsung's complete stock Wi-Fi
+        stack alike (docs/TODO.md). Android prefers 5 GHz BSSIDs for their
+        signal, and by default it blocks a BSSID only after 3 rejections,
+        when the same 3 rejections also disable the whole network: the
+        camera never got to the network's 2.4 GHz BSSIDs and stayed offline.
+
+        Block a rejecting BSSID at once, so the next attempt goes to another
+        BSSID of the same network, and disable the network only after many
+        rejections (a mesh can have several 5 GHz BSSIDs to go through).
+    -->
+    <integer translatable="false" name="config_wifiBssidBlocklistMonitorAssociationRejectionThreshold">1</integer>
+    <integer translatable="false" name="config_wifiDisableReasonAssociationRejectionThreshold">20</integer>
+</resources>

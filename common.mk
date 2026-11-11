@@ -23,6 +23,11 @@ SMDK4412_CHARGER_NO_SUSPEND := true
 # Overlay
 DEVICE_PACKAGE_OVERLAYS += $(COMMON_PATH)/overlay
 
+# Wi-Fi: fall back to 2.4 GHz when a 5 GHz AP rejects the camera
+# (rro_overlays/WifiOverlayGalaxyCamera)
+PRODUCT_PACKAGES += \
+    WifiOverlayGalaxyCamera
+
 # Screen density
 PRODUCT_AAPT_CONFIG := normal
 PRODUCT_AAPT_PREF_CONFIG := xhdpi
