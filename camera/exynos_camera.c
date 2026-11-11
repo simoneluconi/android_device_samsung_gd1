@@ -990,15 +990,31 @@ int exynos_camera_params_init(struct exynos_camera *exynos_camera, int id)
 	 *   The black and white levels can be overridden with
 	 *   persist.vendor.camera.raw.black and .white until they are
 	 *   characterised per ISO.
+	 *
+	 * The GC200 (sf2wifi, ISP firmware D16FL*) sends another frame,
+	 * measured on 2026-11-11: 24821376 bytes, a continuous big-endian
+	 * 12-bit stream (raw12be), 4736 pixels (7104 bytes) per row, 3494 rows
+	 * and no tail, GRBG as on the GC100, the same zero columns, image in
+	 * every row. Its black level is about 256 (64 at 10 bit, x4); a dark
+	 * frame is still to be measured.
 	 */
-	exynos_param_string_set(exynos_camera, "raw-size", "4736x3452");
-	exynos_param_string_set(exynos_camera, "raw-format", "raw10be");
-	exynos_param_string_set(exynos_camera, "raw-cfa", "grbg");
-	exynos_param_string_set(exynos_camera, "raw-active-area", "2,0,4666,3452");
-	exynos_param_int_set(exynos_camera, "raw-black-level",
-		property_get_int32("persist.vendor.camera.raw.black", 64));
-	exynos_param_int_set(exynos_camera, "raw-white-level",
-		property_get_int32("persist.vendor.camera.raw.white", 1023));
+	{
+		char device[PROPERTY_VALUE_MAX];
+		int gc200 = property_get("ro.product.device", device, "") > 0 &&
+			strcmp(device, "sf2wifi") == 0;
+
+		exynos_param_string_set(exynos_camera, "raw-size",
+			gc200 ? "4736x3494" : "4736x3452");
+		exynos_param_string_set(exynos_camera, "raw-format",
+			gc200 ? "raw12be" : "raw10be");
+		exynos_param_string_set(exynos_camera, "raw-cfa", "grbg");
+		exynos_param_string_set(exynos_camera, "raw-active-area",
+			gc200 ? "2,0,4666,3494" : "2,0,4666,3452");
+		exynos_param_int_set(exynos_camera, "raw-black-level",
+			property_get_int32("persist.vendor.camera.raw.black", gc200 ? 256 : 64));
+		exynos_param_int_set(exynos_camera, "raw-white-level",
+			property_get_int32("persist.vendor.camera.raw.white", gc200 ? 4095 : 1023));
+	}
 
 	// P/A/S/M, see exynos_camera_params_apply()
 	exynos_param_string_set(exynos_camera, "pasm-mode", "auto");
