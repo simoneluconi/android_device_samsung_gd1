@@ -75,20 +75,31 @@ void vendor_load_properties()
     char const *serial_number_file = SERIAL_NUMBER_FILE;
     std::string serial_number;
 
-    //property_override("ro.treble.enabled", "true");
-    property_override("vendor.rild.libargs", "-d /dev/ttyS0");
-
     if (ReadFileToString(serial_number_file, &serial_number)) {
         serial_number = Trim(serial_number);
         property_override("ro.serialno", serial_number.c_str());
     }
 
-    property_override_dual("ro.product.model", "ro.vendor.product.model", "EK-GC100");
-    property_override_dual("ro.product.device", "ro.vendor.product.device", "gd1");
-    property_override_dual("ro.product.name", "ro.vendor.product.name", "gd1xx");
-    property_override_dual("ro.build.description", "ro.vendor.build.description", "gd1xx-user 4.1.2 JZO54K GC100XXBMC4 release-keys");
-    property_override_dual("ro.build.fingerprint", "ro.vendor.build.fingerprint", "samsung/gd1xx/gd1:4.1.2/JZO54K/GC100XXBMC4:user/release-keys");
-    property_override("ro.build.product", "gd1");
+    // The GC200 (sf2wifi) build shares this library; its bootloader
+    // version names the model (GC200XXUCNK4)
+    if (android::base::StartsWith(bootloader, "GC200")) {
+        property_override_dual("ro.product.model", "ro.vendor.product.model", "EK-GC200");
+        property_override_dual("ro.product.device", "ro.vendor.product.device", "sf2wifi");
+        property_override_dual("ro.product.name", "ro.vendor.product.name", "sf2wifixx");
+        property_override_dual("ro.build.description", "ro.vendor.build.description", "sf2wifixx-user 4.3 JSS15J GC200XXUCNK4 release-keys");
+        property_override_dual("ro.build.fingerprint", "ro.vendor.build.fingerprint", "samsung/sf2wifixx/sf2wifi:4.3/JSS15J/GC200XXUCNK4:user/release-keys");
+        property_override("ro.build.product", "sf2wifi");
+    } else {
+        //property_override("ro.treble.enabled", "true");
+        property_override("vendor.rild.libargs", "-d /dev/ttyS0");
+
+        property_override_dual("ro.product.model", "ro.vendor.product.model", "EK-GC100");
+        property_override_dual("ro.product.device", "ro.vendor.product.device", "gd1");
+        property_override_dual("ro.product.name", "ro.vendor.product.name", "gd1xx");
+        property_override_dual("ro.build.description", "ro.vendor.build.description", "gd1xx-user 4.1.2 JZO54K GC100XXBMC4 release-keys");
+        property_override_dual("ro.build.fingerprint", "ro.vendor.build.fingerprint", "samsung/gd1xx/gd1:4.1.2/JZO54K/GC100XXBMC4:user/release-keys");
+        property_override("ro.build.product", "gd1");
+    }
 
     const std::string device = GetProperty("ro.product.device", "");
     LOG(INFO) << "Found bootloader " << bootloader << ". " << "Setting build properties for " << device << ".\n";
