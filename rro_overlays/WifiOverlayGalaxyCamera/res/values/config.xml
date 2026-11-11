@@ -38,4 +38,11 @@
         none (Android's own rule: several APs, all agreeing).
     -->
     <bool translatable="false" name="config_wifiUpdateCountryCodeFromScanResultGeneric">true</bool>
+
+    <!--
+        No 5 GHz hotspot. The radio cannot transmit on 5 GHz (above), and the
+        5 GHz SoftAP did not even start ("Failed to set country code"), so
+        the hotspot settings offer 2.4 GHz only.
+    -->
+    <bool translatable="false" name="config_wifiSoftap5ghzSupported">false</bool>
 </resources>
