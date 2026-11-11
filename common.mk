@@ -110,8 +110,11 @@ ifneq ($(wildcard $(COMMON_PATH)/bringup/adb_keys),)
 PRODUCT_ADB_KEYS := $(COMMON_PATH)/bringup/adb_keys
 endif
 endif
+# logd leaves the kernel log out on low-RAM devices; take it in, so the
+# persisted logs also hold the kernel side of a problem (modem, Wi-Fi, ISP).
 PRODUCT_SYSTEM_PROPERTIES += \
-    persist.logd.logpersistd=logcatd
+    persist.logd.logpersistd=logcatd \
+    ro.logd.kernel=true
 PRODUCT_COPY_FILES += \
     $(COMMON_PATH)/bringup-tools/gd1-bringup.sh:$(TARGET_COPY_OUT_VENDOR)/bin/gd1-bringup.sh
 endif
