@@ -21,4 +21,21 @@
     -->
     <integer translatable="false" name="config_wifiBssidBlocklistMonitorAssociationRejectionThreshold">1</integer>
     <integer translatable="false" name="config_wifiDisableReasonAssociationRejectionThreshold">20</integer>
+    <!--
+        After 5 consecutive failures (hardcoded) Android disables the network
+        for this long. The GC100 reaches 5 on the 5 GHz BSSIDs of a mesh
+        before it gets to 2.4 GHz, and then stayed offline for 5 minutes.
+        The rejecting BSSIDs stay blocked meanwhile, so after the pause the
+        next attempt goes to 2.4 GHz.
+    -->
+    <integer translatable="false" name="config_wifiDisableReasonConsecutiveFailuresDurationMs">15000</integer>
+
+    <!--
+        Wi-Fi country code from where the camera is. The GC100 takes it from
+        its SIM; the GC200 has no modem, and without Google services there
+        is no geocoder, so Android had no country at all. Take it from the
+        802.11d country element of nearby access points when telephony has
+        none (Android's own rule: several APs, all agreeing).
+    -->
+    <bool translatable="false" name="config_wifiUpdateCountryCodeFromScanResultGeneric">true</bool>
 </resources>
