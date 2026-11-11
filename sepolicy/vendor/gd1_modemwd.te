@@ -1,0 +1,7 @@
+# gd1-modem-watchdog.sh: restarts cbd and rild when the modem fails at boot.
+# Permissive like the rest of the device policy (docs/TODO.md).
+type gd1_modemwd, domain;
+type gd1_modemwd_exec, exec_type, vendor_file_type, file_type;
+
+init_daemon_domain(gd1_modemwd)
+permissive gd1_modemwd;

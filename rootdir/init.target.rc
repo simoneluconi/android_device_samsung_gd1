@@ -147,6 +147,18 @@ service cpboot-daemon /vendor/bin/cbd -d
     group radio cache inet misc audio sdcard_rw log
     seclabel u:r:cpboot-daemon:s0
 
+# Restarts cbd and rild once or twice if the modem fails to come up at boot
+# (see the script)
+service gd1_modem_watchdog /vendor/bin/gd1-modem-watchdog.sh
+    user root
+    group root radio log
+    disabled
+    oneshot
+    seclabel u:r:gd1_modemwd:s0
+
+on property:sys.boot_completed=1
+    start gd1_modem_watchdog
+
 # GPS: BCM4752 on ttySAC1, powered through GPS_PWR_EN by the daemon
 on boot
     chown root system /dev/ttySAC1
