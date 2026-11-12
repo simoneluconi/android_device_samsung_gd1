@@ -31,20 +31,16 @@
 #include "lsm330dlc_accel.h"
 #include <pthread.h>
 
+/* The kernel driver reports through its own input device: no thread here */
 struct lsm330dlc_acceleration_data {
 	int64_t delay;
 	int device_fd;
-
-	pthread_t thread;
-	pthread_mutex_t mutex;
-	int thread_continue;
 };
 
 int lsm330dlc_acceleration_init(struct smdk4x12_sensors_handlers *handlers,
 	struct smdk4x12_sensors_device *device)
 {
 	struct lsm330dlc_acceleration_data *data = NULL;
-	pthread_attr_t thread_attr;
 	int device_fd = -1;
 	int uinput_fd = -1;
 	int input_fd = -1;
@@ -57,6 +53,8 @@ int lsm330dlc_acceleration_init(struct smdk4x12_sensors_handlers *handlers,
 		return -EINVAL;
 
 	data = (struct lsm330dlc_acceleration_data *) calloc(1, sizeof(struct lsm330dlc_acceleration_data));
+	if (data == NULL)
+		goto error;
 
 	device_fd = open("/dev/accelerometer", O_RDONLY);
 	if (device_fd < 0) {
@@ -69,14 +67,6 @@ int lsm330dlc_acceleration_init(struct smdk4x12_sensors_handlers *handlers,
 		ALOGE("%s: Unable to open acceleration input", __func__);
 		goto error;
 	}
-
-	data->thread_continue = 1;
-
-	pthread_mutex_init(&data->mutex, NULL);
-	pthread_mutex_lock(&data->mutex);
-
-	pthread_attr_init(&thread_attr);
-	pthread_attr_setdetachstate(&thread_attr, PTHREAD_CREATE_DETACHED);
 
 	data->device_fd = device_fd;
 	handlers->poll_fd = input_fd;
@@ -112,10 +102,6 @@ int lsm330dlc_acceleration_deinit(struct smdk4x12_sensors_handlers *handlers)
 	data = (struct lsm330dlc_acceleration_data *) handlers->data;
 
 	handlers->activated = 0;
-	data->thread_continue = 0;
-	pthread_mutex_unlock(&data->mutex);
-
-	pthread_mutex_destroy(&data->mutex);
 
 	if (handlers->poll_fd >= 0)
 		close(handlers->poll_fd);
@@ -155,9 +141,8 @@ int lsm330dlc_acceleration_activate(struct smdk4x12_sensors_handlers *handlers)
 		ALOGE("%s: Unable to set lsm330dlc acceleration enable", __func__);
 		return -1;
 	}
-	
+
 	handlers->activated = 1;
-	pthread_mutex_unlock(&data->mutex);
 
 	return 0;
 }

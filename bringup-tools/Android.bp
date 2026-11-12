@@ -15,6 +15,13 @@ cc_binary {
 }
 
 cc_binary {
+    name: "gd1_sensortest",
+    srcs: ["sensortest.c"],
+    shared_libs: ["libandroid"],
+    installable: false,
+}
+
+cc_binary {
     name: "gd1_hdmitest",
     srcs: ["hdmitest.c"],
     installable: false,

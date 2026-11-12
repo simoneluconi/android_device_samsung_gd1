@@ -34,6 +34,7 @@
  */
 
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <stdint.h>
 #include <fcntl.h>
@@ -60,6 +61,12 @@
 #define AK8963_ST1_DRDY		(1 << 0)
 #define AK8963_ST2_HOFL		(1 << 3)
 
+/*
+ * The measuring thread sleeps on cond while the sensor is off. mutex guards
+ * active, thread_continue, delay and akfs_params (the thread samples, and
+ * activate/deactivate load and save the AKFS offsets, under it); the sleep
+ * between samples is outside it.
+ */
 struct akm8963_data {
 	AK8975PRMS akfs_params;
 	sensors_vec_t magnetic;
@@ -70,6 +77,8 @@ struct akm8963_data {
 
 	pthread_t thread;
 	pthread_mutex_t mutex;
+	pthread_cond_t cond;
+	int active;
 	int thread_continue;
 };
 
@@ -179,108 +188,98 @@ int akfs_init(struct akm8963_data *akm8963_data, char *asa, AKFS_PATNO pat)
 	return 0;
 }
 
-void *akm8963_thread(void *thread_data)
+/* One measurement, sent to the uinput device. Called with data->mutex held. */
+static void akm8963_sample(struct akm8963_data *data)
 {
-	struct smdk4x12_sensors_handlers *handlers = NULL;
-	struct akm8963_data *data = NULL;
 	struct input_event event;
-	struct timespec now;
 	char i2c_data[SENSOR_DATA_SIZE] = { 0 };
 	short magnetic_data[3];
 	short mode;
-	int64_t before, after, delay, diff;
-	int device_fd;
-	int uinput_fd;
 	int rc;
 
-	if (thread_data == NULL)
-		return NULL;
+	mode = AK8963_CNTL1_SNG_MEASURE;
+	rc = ioctl(data->device_fd, ECS_IOCTL_SET_MODE, &mode);
+	if (rc < 0) {
+		ALOGE("%s: Unable to set akm8963 mode", __func__);
+		return;
+	}
 
-	handlers = (struct smdk4x12_sensors_handlers *) thread_data;
-	if (handlers->data == NULL)
-		return NULL;
+	rc = ioctl(data->device_fd, ECS_IOCTL_GETDATA, &i2c_data);
+	if (rc < 0) {
+		ALOGE("%s: Unable to get akm8963 data", __func__);
+		return;
+	}
 
-	data = (struct akm8963_data *) handlers->data;
+	if (!(i2c_data[0] & AK8963_ST1_DRDY)) {
+		ALOGV("%s: akm8963 data is not ready", __func__);
+		return;
+	}
 
-	device_fd = data->device_fd;
-	if (device_fd < 0)
-		return NULL;
+	if (i2c_data[7] & AK8963_ST2_HOFL) {
+		ALOGV("%s: akm8963 magnetic sensor overflow", __func__);
+		return;
+	}
 
-	uinput_fd = data->uinput_fd;
-	if (uinput_fd < 0)
-		return NULL;
+	// 16-bit (0.15 uT/LSB) to the AK8975 scale (0.3 uT/LSB)
+	magnetic_data[0] = ((short) ((i2c_data[2] << 8) | (i2c_data[1] & 0xff))) / 2;
+	magnetic_data[1] = ((short) ((i2c_data[4] << 8) | (i2c_data[3] & 0xff))) / 2;
+	magnetic_data[2] = ((short) ((i2c_data[6] << 8) | (i2c_data[5] & 0xff))) / 2;
 
-	while (data->thread_continue) {
-		pthread_mutex_lock(&data->mutex);
+	rc = akfs_get_magnetic_field(data, (short *) &magnetic_data);
+	if (rc < 0) {
+		ALOGV("%s: Unable to get AKFS magnetic field", __func__);
+		return;
+	}
+
+	input_event_set(&event, EV_REL, REL_X, (int) (data->magnetic.x * 1000));
+	write(data->uinput_fd, &event, sizeof(event));
+	input_event_set(&event, EV_REL, REL_Y, (int) (data->magnetic.y * 1000));
+	write(data->uinput_fd, &event, sizeof(event));
+	input_event_set(&event, EV_REL, REL_Z, (int) (data->magnetic.z * 1000));
+	write(data->uinput_fd, &event, sizeof(event));
+	input_event_set(&event, EV_REL, REL_MISC, (int) data->magnetic.status);
+	write(data->uinput_fd, &event, sizeof(event));
+	input_event_set(&event, EV_SYN, 0, 0);
+	write(data->uinput_fd, &event, sizeof(event));
+}
+
+void *akm8963_thread(void *thread_data)
+{
+	struct akm8963_data *data = (struct akm8963_data *) thread_data;
+	struct timespec now;
+	int64_t before, after, delay, diff;
+
+	pthread_mutex_lock(&data->mutex);
+	for (;;) {
+		while (data->thread_continue && !data->active)
+			pthread_cond_wait(&data->cond, &data->mutex);
 		if (!data->thread_continue)
 			break;
 
-		while (handlers->activated) {
-			// Monotonic: a wall clock step (NTP, adb) must not stretch the
-			// sleep below
-			clock_gettime(CLOCK_MONOTONIC, &now);
-			before = (int64_t) now.tv_sec * 1000000000LL + now.tv_nsec;
+		// Monotonic: a wall clock step (NTP, adb) must not stretch the
+		// sleep below
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		before = (int64_t) now.tv_sec * 1000000000LL + now.tv_nsec;
 
-			mode = AK8963_CNTL1_SNG_MEASURE;
-			rc = ioctl(device_fd, ECS_IOCTL_SET_MODE, &mode);
-			if (rc < 0) {
-				ALOGE("%s: Unable to set akm8963 mode", __func__);
-				goto sleep;
-			}
+		akm8963_sample(data);
 
-			memset(&i2c_data, 0, sizeof(i2c_data));
-			rc = ioctl(device_fd, ECS_IOCTL_GETDATA, &i2c_data);
-			if (rc < 0) {
-				ALOGE("%s: Unable to get akm8963 data", __func__);
-				goto sleep;
-			}
+		// The period is 0 until batch() sets it: use 20 ms (50 Hz)
+		delay = data->delay > 0 ? data->delay : 20000000LL;
+		pthread_mutex_unlock(&data->mutex);
 
-			// Skipped samples still wait for the next period, or the loop
-			// would spin at the conversion rate (e.g. on overflow near the
-			// zoom motor's magnets)
-			if (!(i2c_data[0] & AK8963_ST1_DRDY)) {
-				ALOGV("%s: akm8963 data is not ready", __func__);
-				goto sleep;
-			}
+		// Skipped samples still wait for the next period, or the loop
+		// would spin at the conversion rate (e.g. on overflow near the
+		// zoom motor's magnets)
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		after = (int64_t) now.tv_sec * 1000000000LL + now.tv_nsec;
+		diff = (delay - (after - before)) / 1000;
+		if (diff > 0)
+			usleep(diff > 1000000 ? 1000000 : diff);
 
-			if (i2c_data[7] & AK8963_ST2_HOFL) {
-				ALOGV("%s: akm8963 magnetic sensor overflow", __func__);
-				goto sleep;
-			}
-
-			// 16-bit (0.15 uT/LSB) to the AK8975 scale (0.3 uT/LSB)
-			magnetic_data[0] = ((short) ((i2c_data[2] << 8) | (i2c_data[1] & 0xff))) / 2;
-			magnetic_data[1] = ((short) ((i2c_data[4] << 8) | (i2c_data[3] & 0xff))) / 2;
-			magnetic_data[2] = ((short) ((i2c_data[6] << 8) | (i2c_data[5] & 0xff))) / 2;
-
-			rc = akfs_get_magnetic_field(data, (short *) &magnetic_data);
-			if (rc < 0) {
-				ALOGV("%s: Unable to get AKFS magnetic field", __func__);
-				goto sleep;
-			}
-
-			input_event_set(&event, EV_REL, REL_X, (int) (data->magnetic.x * 1000));
-			write(uinput_fd, &event, sizeof(event));
-			input_event_set(&event, EV_REL, REL_Y, (int) (data->magnetic.y * 1000));
-			write(uinput_fd, &event, sizeof(event));
-			input_event_set(&event, EV_REL, REL_Z, (int) (data->magnetic.z * 1000));
-			write(uinput_fd, &event, sizeof(event));
-			input_event_set(&event, EV_REL, REL_MISC, (int) data->magnetic.status);
-			write(uinput_fd, &event, sizeof(event));
-			input_event_set(&event, EV_SYN, 0, 0);
-			write(uinput_fd, &event, sizeof(event));
-
-sleep:
-			clock_gettime(CLOCK_MONOTONIC, &now);
-			after = (int64_t) now.tv_sec * 1000000000LL + now.tv_nsec;
-
-			// The period is 0 until batch() sets it: use 20 ms (50 Hz)
-			delay = data->delay > 0 ? data->delay : 20000000LL;
-			diff = (delay - (after - before)) / 1000;
-			if (diff > 0)
-				usleep(diff > 1000000 ? 1000000 : diff);
-		}
+		pthread_mutex_lock(&data->mutex);
 	}
+	pthread_mutex_unlock(&data->mutex);
+
 	return NULL;
 }
 
@@ -288,7 +287,6 @@ int akm8963_init(struct smdk4x12_sensors_handlers *handlers,
 	struct smdk4x12_sensors_device *device)
 {
 	struct akm8963_data *data = NULL;
-	pthread_attr_t thread_attr;
 	char i2c_data[RWBUF_SIZE] = { 0 };
 	short mode;
 	int device_fd = -1;
@@ -303,6 +301,8 @@ int akm8963_init(struct smdk4x12_sensors_handlers *handlers,
 		return -EINVAL;
 
 	data = (struct akm8963_data *) calloc(1, sizeof(struct akm8963_data));
+	if (data == NULL)
+		goto error;
 
 	device_fd = open("/dev/akm8963", O_RDONLY);
 	if (device_fd < 0) {
@@ -370,23 +370,22 @@ int akm8963_init(struct smdk4x12_sensors_handlers *handlers,
 		goto error;
 	}
 
+	// Everything the thread reads is set before it starts
+	data->device_fd = device_fd;
+	data->uinput_fd = uinput_fd;
+	data->active = 0;
 	data->thread_continue = 1;
-
 	pthread_mutex_init(&data->mutex, NULL);
-	pthread_mutex_lock(&data->mutex);
+	pthread_cond_init(&data->cond, NULL);
 
-	pthread_attr_init(&thread_attr);
-	pthread_attr_setdetachstate(&thread_attr, PTHREAD_CREATE_DETACHED);
-
-	rc = pthread_create(&data->thread, &thread_attr, akm8963_thread, (void *) handlers);
-	if (rc < 0) {
-		ALOGE("%s: Unable to create akm8963 thread", __func__);
+	rc = pthread_create(&data->thread, NULL, akm8963_thread, (void *) data);
+	if (rc != 0) {
+		ALOGE("%s: Unable to create akm8963 thread: %s", __func__, strerror(rc));
+		pthread_cond_destroy(&data->cond);
 		pthread_mutex_destroy(&data->mutex);
 		goto error;
 	}
 
-	data->device_fd = device_fd;
-	data->uinput_fd = uinput_fd;
 	handlers->poll_fd = input_fd;
 	handlers->data = (void *) data;
 
@@ -424,10 +423,17 @@ int akm8963_deinit(struct smdk4x12_sensors_handlers *handlers)
 
 	data = (struct akm8963_data *) handlers->data;
 
+	pthread_mutex_lock(&data->mutex);
 	handlers->activated = 0;
+	data->active = 0;
 	data->thread_continue = 0;
+	pthread_cond_signal(&data->cond);
 	pthread_mutex_unlock(&data->mutex);
 
+	// Bounded: the thread holds the mutex for one sample and sleeps at most
+	// 1 s without it. Nothing here runs inside a framework callback.
+	pthread_join(data->thread, NULL);
+	pthread_cond_destroy(&data->cond);
 	pthread_mutex_destroy(&data->mutex);
 
 	if (data->uinput_fd >= 0) {
@@ -469,6 +475,8 @@ int akm8963_activate(struct smdk4x12_sensors_handlers *handlers)
 	data = (struct akm8963_data *) handlers->data;
 	akfs_params = &data->akfs_params;
 
+	pthread_mutex_lock(&data->mutex);
+
 	// Read settings from a file
 	rc = AKFS_LoadParameters(akfs_params, AKFS_CONFIG_PATH);
 	if (rc != AKM_SUCCESS) {
@@ -492,7 +500,9 @@ int akm8963_activate(struct smdk4x12_sensors_handlers *handlers)
 	// Initialize magnetic status
 	akfs_params->mi_hstatus = SENSOR_STATUS_UNRELIABLE;
 
+	data->active = 1;
 	handlers->activated = 1;
+	pthread_cond_signal(&data->cond);
 	pthread_mutex_unlock(&data->mutex);
 
 	return 0;
@@ -520,6 +530,11 @@ int akm8963_deactivate(struct smdk4x12_sensors_handlers *handlers)
 	if (device_fd < 0)
 		return -1;
 
+	// The thread stops sampling before the offsets are saved
+	pthread_mutex_lock(&data->mutex);
+	data->active = 0;
+	handlers->activated = 0;
+
 	empty = 1;
 
 	if ((akfs_params->mfv_ho.u.x != 0.0f) || (akfs_params->mfv_ho.u.y != 0.0f) ||
@@ -543,7 +558,7 @@ int akm8963_deactivate(struct smdk4x12_sensors_handlers *handlers)
 	if (rc < 0)
 		ALOGE("%s: Unable to set akm8963 mode", __func__);
 
-	handlers->activated = 0;
+	pthread_mutex_unlock(&data->mutex);
 
 	return 0;
 }
