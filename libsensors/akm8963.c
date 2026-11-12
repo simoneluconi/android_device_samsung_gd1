@@ -62,6 +62,19 @@
 #define AK8963_ST2_HOFL		(1 << 3)
 
 /*
+ * AKFS_AOC fits a sphere to 4 of its last 20 samples, and wants them more
+ * than a radius (the Earth's field, ~150 LSB) apart. Fed every sample at
+ * 50 Hz that is a 0.4 s window: no figure-eight turns fast enough, so the
+ * offset never converged (152 uT at rest, 2026-11-12). Feed it a sample only
+ * once the field has moved this far (LSB, 0.3 uT each) from the last one fed,
+ * so the window spans the whole movement at any rate. A port of AKFS_AOC to a
+ * synthetic figure-eight at 50 Hz: without spacing 3 of 36 runs converged;
+ * with 60 LSB (~0.4 of the Earth's field) a wide one converges in all 36,
+ * in ~6 s, within 3 uT of the true offset. 20 LSB was too short.
+ */
+#define AKFS_AOC_STEP		60.0f
+
+/*
  * The measuring thread sleeps on cond while the sensor is off. mutex guards
  * active, thread_continue, delay and akfs_params (the thread samples, and
  * activate/deactivate load and save the AKFS offsets, under it); the sleep
@@ -80,13 +93,16 @@ struct akm8963_data {
 	pthread_cond_t cond;
 	int active;
 	int thread_continue;
+
+	AKFVEC aoc_last;	/* last sample fed to AKFS_AOC */
+	int aoc_last_valid;
 };
 
 int akfs_get_magnetic_field(struct akm8963_data *akm8963_data, short *magnetic_data)
 {
 	AK8975PRMS *params;
-	int rc, aocret;
-	float radius;
+	int rc, aocret = AKFS_ERROR;
+	float radius, dx, dy, dz;
 
 	if (akm8963_data == NULL || magnetic_data == NULL)
 		return -EINVAL;
@@ -109,8 +125,20 @@ int akfs_get_magnetic_field(struct akm8963_data *akm8963_data, short *magnetic_d
 	}
 
 	// AOC for magnetometer
-	// Offset estimation is done in this function
-	aocret = AKFS_AOC(&params->m_aocv, params->mfv_hdata, &params->mfv_ho);
+	// Offset estimation is done in this function, on spaced samples only
+	dx = params->mfv_hdata[0].u.x - akm8963_data->aoc_last.u.x;
+	dy = params->mfv_hdata[0].u.y - akm8963_data->aoc_last.u.y;
+	dz = params->mfv_hdata[0].u.z - akm8963_data->aoc_last.u.z;
+	if (!akm8963_data->aoc_last_valid ||
+			dx * dx + dy * dy + dz * dz >= AKFS_AOC_STEP * AKFS_AOC_STEP) {
+		akm8963_data->aoc_last = params->mfv_hdata[0];
+		akm8963_data->aoc_last_valid = 1;
+		aocret = AKFS_AOC(&params->m_aocv, params->mfv_hdata, &params->mfv_ho);
+		if (aocret == AKFS_SUCCESS &&
+				params->mi_hstatus != SENSOR_STATUS_ACCURACY_HIGH)
+			ALOGD("AK8963 AOC offset (%f, %f, %f)", params->mfv_ho.u.x,
+				params->mfv_ho.u.y, params->mfv_ho.u.z);
+	}
 
 	// Subtract offset
 	// Then, a magnetic vector, the unit is uT, is stored in mfv_hvbuf.
@@ -497,6 +525,7 @@ int akm8963_activate(struct smdk4x12_sensors_handlers *handlers)
 
 	// Initialize for AOC
 	AKFS_InitAOC(&akfs_params->m_aocv);
+	data->aoc_last_valid = 0;
 	// Initialize magnetic status
 	akfs_params->mi_hstatus = SENSOR_STATUS_UNRELIABLE;
 
