@@ -59,22 +59,26 @@ static int64_t timespec_ns(struct timespec *t)
 }
 
 /*
- * evdev stamps events with CLOCK_REALTIME, and the 3.4 kernel only lets
- * userspace switch it to CLOCK_MONOTONIC (EVIOCSCLOCKID), while Android
- * wants sensor timestamps in CLOCK_BOOTTIME (elapsedRealtimeNanos). Shift
- * each event by the current difference between the two clocks.
+ * Android wants sensor timestamps in CLOCK_BOOTTIME (elapsedRealtimeNanos),
+ * and the 3.4 kernel's evdev offers only CLOCK_REALTIME (its default) or
+ * CLOCK_MONOTONIC (EVIOCSCLOCKID). input_open() asks for CLOCK_MONOTONIC,
+ * which unlike the wall clock never jumps (NITZ, NTP, the user setting the
+ * time), and each event is shifted by the current difference between the
+ * two clocks: the time spent in suspend.
  */
+static clockid_t input_clock = CLOCK_MONOTONIC;	/* REALTIME if refused */
+
 int64_t input_timestamp(struct input_event *event)
 {
-	struct timespec realtime, boottime;
+	struct timespec event_clock, boottime;
 
 	if (event == NULL)
 		return -1;
 
-	clock_gettime(CLOCK_REALTIME, &realtime);
+	clock_gettime(input_clock, &event_clock);
 	clock_gettime(CLOCK_BOOTTIME, &boottime);
 
-	return timestamp(&event->time) + timespec_ns(&boottime) - timespec_ns(&realtime);
+	return timestamp(&event->time) + timespec_ns(&boottime) - timespec_ns(&event_clock);
 }
 
 int uinput_rel_create(const char *name)
@@ -172,19 +176,30 @@ int input_open(char *name)
 			continue;
 
 		rc = ioctl(fd, EVIOCGNAME(sizeof(input_name) - 1), &input_name);
-		if (rc < 0)
+		if (rc < 0) {
+			close(fd);
 			continue;
+		}
 
 		c = strstr((char *) &input_name, "\n");
 		if (c != NULL)
 			*c = '\0';
 
-		if (strcmp(input_name, name) == 0)
+		if (strcmp(input_name, name) == 0) {
+			int clock = CLOCK_MONOTONIC;
+
+			/* event times on the monotonic clock, see input_timestamp() */
+			if (ioctl(fd, EVIOCSCLOCKID, &clock) < 0) {
+				ALOGE("%s: Unable to set the clock of %s", __func__, name);
+				input_clock = CLOCK_REALTIME;
+			}
+			closedir(d);
 			return fd;
-		else
+		} else
 			close(fd);
 	}
 
+	closedir(d);
 	return -1;
 }
 
@@ -224,10 +239,12 @@ int sysfs_path_prefix(char *name, char *path_prefix)
 
 		if (strcmp(input_name, name) == 0) {
 			snprintf(path_prefix, PATH_MAX, "/sys/class/input/%s", di->d_name);
+			closedir(d);
 			return 0;
 		}
 	}
 
+	closedir(d);
 	return -1;
 }
 
