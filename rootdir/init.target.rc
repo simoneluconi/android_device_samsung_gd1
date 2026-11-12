@@ -56,6 +56,11 @@ on boot
 # cpu.shares on the v1 cpu controller, so it stayed at 1024 like foreground.
     write /dev/cpuctl/background/cpu.shares 52
 
+# Vibrator strength (0-100 onto 50-100 % PWM duty; the kernel boots at 50,
+# which the user found far too strong). vibrator@1.0 has no amplitude
+# control, so Android's intensity settings cannot scale it.
+    write /sys/class/timed_output/vibrator/pwm_value 24
+
 on property:sys.boot_completed=1
     setprop sys.usb.configfs 1
     setprop vendor.gd1.boot_completed 1
