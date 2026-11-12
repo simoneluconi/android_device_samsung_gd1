@@ -1,0 +1,29 @@
+//
+// SPDX-FileCopyrightText: 2026 The GalaxyCameraRevived Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+// NFC placeholder for the GC200's tag (see nfc-field-notice.c). Installed
+// by the sf2wifi product only; the GC100 has no tag.
+cc_binary {
+    name: "nfc-field-notice",
+    vendor: true,
+    srcs: ["nfc-field-notice.c"],
+    shared_libs: ["liblog"],
+    cflags: ["-Wall", "-Werror"],
+    init_rc: ["nfc-field-notice.rc"],
+}
+
+// Shows the "not supported yet" toast for nfc-field-notice. A receiver only:
+// no activity, no process while nothing happens.
+android_app {
+    name: "GalaxyCameraNfcNotice",
+    srcs: ["app/src/**/*.java"],
+    resource_dirs: ["app/res"],
+    manifest: "app/AndroidManifest.xml",
+    sdk_version: "current",
+    product_specific: true,
+    optimize: {
+        enabled: false,
+    },
+}

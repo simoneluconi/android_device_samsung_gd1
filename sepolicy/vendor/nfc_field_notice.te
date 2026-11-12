@@ -1,0 +1,8 @@
+# nfc-field-notice, the GC200's NFC placeholder (nfcnotice/): polls a sysfs
+# count and runs cmd for a broadcast. Permissive like the rest of the device
+# policy (docs/TODO.md).
+type nfc_field_notice, domain;
+type nfc_field_notice_exec, exec_type, vendor_file_type, file_type;
+
+init_daemon_domain(nfc_field_notice)
+permissive nfc_field_notice;

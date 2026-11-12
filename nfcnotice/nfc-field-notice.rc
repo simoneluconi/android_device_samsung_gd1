@@ -1,0 +1,13 @@
+# NFC placeholder (GC200): a toast when a phone's NFC field reaches the tag.
+# Sleeps in poll() on the kernel's approach count; started once the
+# activity manager can take its broadcasts.
+service vendor.nfc_field_notice /vendor/bin/nfc-field-notice
+    class main
+    user system
+    group system
+    disabled
+    oneshot
+    seclabel u:r:nfc_field_notice:s0
+
+on property:sys.boot_completed=1
+    start vendor.nfc_field_notice

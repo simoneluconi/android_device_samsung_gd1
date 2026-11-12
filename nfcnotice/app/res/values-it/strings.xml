@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-FileCopyrightText: 2026 The GalaxyCameraRevived Project
+     SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <string name="app_name">Avviso NFC</string>
+    <string name="nfc_not_supported">L\'NFC non è ancora supportato. Arriverà in una futura release.</string>
+</resources>
