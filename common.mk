@@ -99,6 +99,14 @@ PRODUCT_COPY_FILES += \
 # Vendor properties
 -include $(COMMON_PATH)/vendor_prop.mk
 
+# smdk4412-common's debug props (ro.secure=0, ro.adb.secure=0, adb on by
+# default) give any PC a root shell over USB without asking. Builds for
+# others leave them out: adb asks for authorisation and runs as shell.
+# Only a developer build (GALAXYCAMERA_DEV_ADB_KEYS=true) keeps them.
+ifneq ($(GALAXYCAMERA_DEV_ADB_KEYS),true)
+SMDK4412_NO_DEBUG_PROPS := true
+endif
+
 # Bring-up aids, userdebug/eng only. Keep logcat on /data so that a
 # bootloop can be read back from the mini recovery. A developer's own adb
 # key (bringup/adb_keys, never committed) is trusted from the first boot
