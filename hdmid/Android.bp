@@ -1,0 +1,14 @@
+// The micro-HDMI output: shows GC Gallery's photos on a TV (docs/HDMI.md)
+cc_binary {
+    name: "hdmid",
+    vendor: true,
+    srcs: [
+        "hdmid.c",
+        "edid.c",
+    ],
+    shared_libs: [
+        "libcutils",
+        "liblog",
+    ],
+    init_rc: ["hdmid.rc"],
+}

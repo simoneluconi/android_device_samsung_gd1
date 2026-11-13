@@ -1,0 +1,10 @@
+# The micro-HDMI output (docs/HDMI.md). It sleeps on the uevent socket and on
+# its control socket. /dev/video16 and /dev/i2c-5 (DDC) are system:system,
+# fb10 root:graphics. The socket is open to all apps: hdmid checks the peer's
+# uid and serves only GC Gallery (and root, system and shell).
+service vendor.hdmid /vendor/bin/hdmid
+    class main
+    user system
+    group system graphics
+    socket hdmid stream 0666 system system
+    seclabel u:r:hdmid:s0

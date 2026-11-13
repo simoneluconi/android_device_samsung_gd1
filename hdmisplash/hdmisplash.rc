@@ -1,7 +1,0 @@
-# HDMI placeholder screen. It sleeps on the uevent socket until the hdmi
-# switch changes; /dev/video16 is system:system, fb10 root:graphics.
-service vendor.hdmisplash /vendor/bin/hdmisplash
-    class main
-    user system
-    group system graphics
-    seclabel u:r:hdmisplash:s0

@@ -1,0 +1,23 @@
+# hdmid, the micro-HDMI output (hdmid/, docs/HDMI.md).
+# Permissive like the rest of the device policy (docs/TODO.md). The rules below
+# cover what it uses all the time, so its log shows only what is new.
+type hdmid, domain;
+type hdmid_exec, exec_type, vendor_file_type, file_type;
+
+# The DDC bus to the sink, for its EDID (/dev/i2c-5)
+type hdmi_ddc_device, dev_type;
+
+init_daemon_domain(hdmid)
+permissive hdmid;
+
+# Hot-plug: uevents and the hdmi switch
+allow hdmid self:netlink_kobject_uevent_socket create_socket_perms_no_ioctl;
+allow hdmid sysfs_switch:dir search;
+allow hdmid sysfs_switch:file r_file_perms;
+
+# The TV output (/dev/video16), its graphic layer (/dev/graphics/fb10), contiguous memory, DDC
+allow hdmid video_device:chr_file rw_file_perms;
+allow hdmid graphics_device:dir search;
+allow hdmid graphics_device:chr_file rw_file_perms;
+allow hdmid ion_device:chr_file rw_file_perms;
+allow hdmid hdmi_ddc_device:chr_file rw_file_perms;

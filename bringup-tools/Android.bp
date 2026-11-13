@@ -24,5 +24,6 @@ cc_binary {
 cc_binary {
     name: "gd1_hdmitest",
     srcs: ["hdmitest.c"],
+    include_dirs: ["device/samsung/gd1/hdmid"],
     installable: false,
 }
