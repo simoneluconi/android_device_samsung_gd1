@@ -451,4 +451,9 @@
         <item>screenshot</item>
         <item>bugreport</item>
     </string-array>
+
+    <!-- GC Gallery holds the system gallery role (systemOnly, so only this config grants
+         it): its Wi-Fi transfer moves GC Camera's photos to the trash from a service, with
+         no activity on screen to show MediaProvider's consent dialog -->
+    <string name="config_systemGallery" translatable="false">com.simoneluconi.gcgallery</string>
 </resources>
