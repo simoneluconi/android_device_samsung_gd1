@@ -6,9 +6,7 @@
 # - Disable the Mainline (APEX) apps a camera does not need. They cannot be
 #   overridden in the build like the plain system apps (see RemovePackages).
 # - Apply the camera-first quick settings tiles, the Rome time zone, the
-#   24-hour clock and the battery percentage once.
-# - Let the shutter wake the camera into the camera app, once.
-# Runs on every boot; all steps are no-ops once done. Output: logcat -s gd1-setup
+#   24-hour clock and the battery percentage once.# Runs on every boot; all steps are no-ops once done. Output: logcat -s gd1-setup
 # Never disable com.android.sdksandbox: PackageManagerService requires it
 # and system_server crashes at boot without it.
 
@@ -42,16 +40,6 @@ if [ "$(settings get secure gd1_firstboot_done)" != 1 ]; then
     settings put --lineage system status_bar_show_battery_percent 2
     settings put secure gd1_firstboot_done 1
     log -t gd1-setup "quick settings tiles, time zone, 24-hour clock, battery percentage and Trust hint set"
-fi
-
-# Once, also on devices set up before it: the shutter wakes the camera straight into the
-# camera app (frameworks/base PhoneWindowManager.launchCameraOnWake). Settings → System →
-# Buttons → Camera button can turn it off again.
-if [ "$(settings get secure gd1_camera_key_done)" != 1 ]; then
-    settings put --lineage system camera_wake_screen 1
-    settings put --lineage system camera_launch 1
-    settings put secure gd1_camera_key_done 1
-    log -t gd1-setup "shutter wakes into the camera"
 fi
 
 for p in \
