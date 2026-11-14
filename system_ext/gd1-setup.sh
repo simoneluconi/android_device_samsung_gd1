@@ -44,9 +44,10 @@ if [ "$(settings get secure gd1_firstboot_done)" != 1 ]; then
     log -t gd1-setup "quick settings tiles, time zone, 24-hour clock, battery percentage and Trust hint set"
 fi
 
-# Once, also on cameras set up before it: GC Gallery's Wi-Fi transfer tile at the end of
-# the quick settings. Only once that GC Gallery has the tile, because SystemUI drops (and
-# writes back without) a tile whose service does not exist.
+# Once, also on cameras set up before it: GC Gallery's Wi-Fi transfer tile, fifth, so the
+# second row starts with it, under Internet (user, 2026-11-14). Only once that GC Gallery
+# has the tile, because SystemUI drops (and writes back without) a tile whose service does
+# not exist.
 TRANSFER_TILE=com.simoneluconi.gcgallery/.transfer.TransferTile
 if [ "$(settings get secure gd1_transfer_tile_done)" != 1 ] &&
     pm query-services --brief -a android.service.quicksettings.action.QS_TILE 2>/dev/null | grep -qF "$TRANSFER_TILE"; then
@@ -55,8 +56,14 @@ if [ "$(settings get secure gd1_transfer_tile_done)" != 1 ] &&
         *"custom($TRANSFER_TILE)"*) ;;
         null|"") ;;
         *)
+            # After the fourth tile (at the end if there are fewer)
+            tiles=$(echo "$tiles" | awk -F, -v t="custom($TRANSFER_TILE)" '{
+                o = ""
+                for (i = 1; i <= NF; i++) { o = o (i > 1 ? "," : "") $i; if (i == 4) o = o "," t }
+                if (NF < 4) o = o "," t
+                print o }')
             kill $(pidof com.android.systemui)
-            settings put secure sysui_qs_tiles "$tiles,custom($TRANSFER_TILE)"
+            settings put secure sysui_qs_tiles "$tiles"
             ;;
     esac
     settings put secure gd1_transfer_tile_done 1
