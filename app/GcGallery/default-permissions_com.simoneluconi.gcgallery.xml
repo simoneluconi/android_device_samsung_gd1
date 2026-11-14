@@ -7,5 +7,7 @@
     <exception package="com.simoneluconi.gcgallery">
         <permission name="android.permission.READ_MEDIA_IMAGES" fixed="false" />
         <permission name="android.permission.ACCESS_MEDIA_LOCATION" fixed="false" />
+        <!-- The Wi-Fi transfer's foreground notification (address and Stop) -->
+        <permission name="android.permission.POST_NOTIFICATIONS" fixed="false" />
     </exception>
 </exceptions>
