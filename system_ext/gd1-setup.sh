@@ -6,7 +6,9 @@
 # - Disable the Mainline (APEX) apps a camera does not need. They cannot be
 #   overridden in the build like the plain system apps (see RemovePackages).
 # - Apply the camera-first quick settings tiles, the Rome time zone, the
-#   24-hour clock and the battery percentage once.# Runs on every boot; all steps are no-ops once done. Output: logcat -s gd1-setup
+#   24-hour clock and the battery percentage once.
+# - Add GC Gallery's Wi-Fi transfer tile to the quick settings, once.
+# Runs on every boot; all steps are no-ops once done. Output: logcat -s gd1-setup
 # Never disable com.android.sdksandbox: PackageManagerService requires it
 # and system_server crashes at boot without it.
 
@@ -40,6 +42,25 @@ if [ "$(settings get secure gd1_firstboot_done)" != 1 ]; then
     settings put --lineage system status_bar_show_battery_percent 2
     settings put secure gd1_firstboot_done 1
     log -t gd1-setup "quick settings tiles, time zone, 24-hour clock, battery percentage and Trust hint set"
+fi
+
+# Once, also on cameras set up before it: GC Gallery's Wi-Fi transfer tile at the end of
+# the quick settings. Only once that GC Gallery has the tile, because SystemUI drops (and
+# writes back without) a tile whose service does not exist.
+TRANSFER_TILE=com.simoneluconi.gcgallery/.transfer.TransferTile
+if [ "$(settings get secure gd1_transfer_tile_done)" != 1 ] &&
+    pm query-services --brief -a android.service.quicksettings.action.QS_TILE 2>/dev/null | grep -qF "$TRANSFER_TILE"; then
+    tiles=$(settings get secure sysui_qs_tiles)
+    case "$tiles" in
+        *"custom($TRANSFER_TILE)"*) ;;
+        null|"") ;;
+        *)
+            kill $(pidof com.android.systemui)
+            settings put secure sysui_qs_tiles "$tiles,custom($TRANSFER_TILE)"
+            ;;
+    esac
+    settings put secure gd1_transfer_tile_done 1
+    log -t gd1-setup "Wi-Fi transfer tile added"
 fi
 
 for p in \
