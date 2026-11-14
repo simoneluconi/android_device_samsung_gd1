@@ -44,32 +44,6 @@ if [ "$(settings get secure gd1_firstboot_done)" != 1 ]; then
     log -t gd1-setup "quick settings tiles, time zone, 24-hour clock, battery percentage and Trust hint set"
 fi
 
-# Once, also on cameras set up before it: GC Gallery's Wi-Fi transfer tile, fifth, so the
-# second row starts with it, under Internet (user, 2026-11-14). Only once that GC Gallery
-# has the tile, because SystemUI drops (and writes back without) a tile whose service does
-# not exist.
-TRANSFER_TILE=com.simoneluconi.gcgallery/.transfer.TransferTile
-if [ "$(settings get secure gd1_transfer_tile_done)" != 1 ] &&
-    pm query-services --brief -a android.service.quicksettings.action.QS_TILE 2>/dev/null | grep -qF "$TRANSFER_TILE"; then
-    tiles=$(settings get secure sysui_qs_tiles)
-    case "$tiles" in
-        *"custom($TRANSFER_TILE)"*) ;;
-        null|"") ;;
-        *)
-            # After the fourth tile (at the end if there are fewer)
-            tiles=$(echo "$tiles" | awk -F, -v t="custom($TRANSFER_TILE)" '{
-                o = ""
-                for (i = 1; i <= NF; i++) { o = o (i > 1 ? "," : "") $i; if (i == 4) o = o "," t }
-                if (NF < 4) o = o "," t
-                print o }')
-            kill $(pidof com.android.systemui)
-            settings put secure sysui_qs_tiles "$tiles"
-            ;;
-    esac
-    settings put secure gd1_transfer_tile_done 1
-    log -t gd1-setup "Wi-Fi transfer tile added"
-fi
-
 for p in \
     org.lineageos.setupwizard \
     com.android.adservices.api \
@@ -82,5 +56,49 @@ for p in \
 do
     pm disable-user --user 0 "$p" > /dev/null 2>&1 || log -t gd1-setup "could not disable $p"
 done
+
+# Once, also on cameras updated from an older release: GC Gallery's Wi-Fi transfer tile,
+# fifth, so the second row starts with it, under Internet (user, 2026-11-14).
+# - Only once the tile service is listed: SystemUI drops (and writes back without) a tile
+#   whose service does not exist.
+# - On the first boot after an update the package manager lists it only some time after
+#   sys.boot_completed (seen on the GC100 and the GC200), so wait for it, up to 3 minutes.
+# - The flag is set only once the list holds the tile, so a boot that gives up tries again.
+TRANSFER_TILE=com.simoneluconi.gcgallery/.transfer.TransferTile
+has_tile() {
+    pm query-services --brief -a android.service.quicksettings.action.QS_TILE 2>/dev/null | grep -qF "$TRANSFER_TILE"
+}
+if [ "$(settings get secure gd1_transfer_tile_done)" != 1 ] && pm path com.simoneluconi.gcgallery > /dev/null 2>&1; then
+    i=0
+    until has_tile; do
+        i=$((i + 1))
+        [ $i -gt 90 ] && break
+        sleep 2
+    done
+    tiles=$(settings get secure sysui_qs_tiles)
+    if [ $i -gt 90 ]; then
+        log -t gd1-setup "Wi-Fi transfer tile: GC Gallery lists no tile service yet, trying again next boot"
+    elif [ "$tiles" = null ] || [ -z "$tiles" ]; then
+        log -t gd1-setup "Wi-Fi transfer tile: no tile list yet, trying again next boot"
+    else
+        case "$tiles" in
+            *"custom($TRANSFER_TILE)"*) ;;
+            *)
+                # After the fourth tile (at the end if there are fewer)
+                tiles=$(echo "$tiles" | awk -F, -v t="custom($TRANSFER_TILE)" '{
+                    o = ""
+                    for (i = 1; i <= NF; i++) { o = o (i > 1 ? "," : "") $i; if (i == 4) o = o "," t }
+                    if (NF < 4) o = o "," t
+                    print o }')
+                # SystemUI writes its in-memory list back over an outside change: set it
+                # while SystemUI is restarting, as for the first-boot list
+                kill $(pidof com.android.systemui)
+                settings put secure sysui_qs_tiles "$tiles"
+                ;;
+        esac
+        settings put secure gd1_transfer_tile_done 1
+        log -t gd1-setup "Wi-Fi transfer tile in place after $((i * 2)) s: $(settings get secure sysui_qs_tiles)"
+    fi
+fi
 
 log -t gd1-setup "done"
