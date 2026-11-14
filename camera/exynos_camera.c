@@ -758,6 +758,9 @@ void exynos_camera_stop(struct exynos_camera *exynos_camera)
 	if (exynos_camera == NULL || exynos_camera->config == NULL)
 		return;
 
+	// The TV must stop reading FIMC memory before it goes
+	exynos_hdmi_close();
+
 	exynos_v4l2_close(exynos_camera, 0);
 
 #ifdef EXYNOS_ION
@@ -3398,6 +3401,10 @@ int exynos_camera_preview(struct exynos_camera *exynos_camera)
 		memory_index = output->memory_index;
 		memory_pointer = (void *) ((unsigned char *) memory->data + output->buffer_length * memory_index);
 		memory_size = output->buffer_length;
+
+		// The same frame to a TV, if one is on (exynos_hdmi.c)
+		exynos_hdmi_frame(width, height, format,
+			output->memory_address + output->buffer_length * memory_index);
 	} else {
 		// In that case, we can directly use the capture memory
 		memory = exynos_camera->capture_memory;
@@ -5528,6 +5535,9 @@ void exynos_camera_stop_preview(struct camera_device *dev)
 	exynos_camera_callback_lock(exynos_camera);
 	exynos_camera_preview_stop(exynos_camera);
 	exynos_camera_callback_unlock(exynos_camera);
+
+	// The app stopped the preview (a capture's pause does not come here)
+	exynos_hdmi_stop();
 }
 
 int exynos_camera_preview_enabled(struct camera_device *dev)

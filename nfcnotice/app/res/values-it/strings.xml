@@ -5,5 +5,5 @@
 -->
 <resources>
     <string name="app_name">Avviso NFC</string>
-    <string name="nfc_not_supported">L\'NFC non è ancora supportato. Arriverà in una futura release.</string>
+    <string name="nfc_not_supported">L\'NFC non è ancora supportato.</string>
 </resources>

@@ -757,6 +757,11 @@ int exynos_v4l2_s_fbuf(struct exynos_camera *exynos_camera, int exynos_v4l2_id,
  * V4L2 Output
  */
 
+// exynos_hdmi.c: the live view on a TV, through hdmid
+void exynos_hdmi_frame(int width, int height, int format, int address);
+void exynos_hdmi_stop(void);
+void exynos_hdmi_close(void);
+
 int exynos_v4l2_output_start(struct exynos_camera *exynos_camera,
 	struct exynos_v4l2_output *output);
 void exynos_v4l2_output_stop(struct exynos_camera *exynos_camera,

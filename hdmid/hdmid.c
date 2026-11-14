@@ -3,9 +3,10 @@
  *
  * Android's display stack has no external display on the Exynos 4412 (the
  * hwcomposer has none, and libhdmi is built only for the 4210), so this daemon
- * owns the TV output and shows what GC Gallery hands it: the photo being
- * viewed, never a copy of the screen. Without the gallery it shows a short
- * notice that HDMI works only there for now.
+ * owns the TV output and shows what it is handed, never a copy of the screen:
+ * the photo being viewed in GC Gallery, or the camera's live view, which the
+ * camera HAL hands over frame by frame (video layer, /dev/video20). Without
+ * either it shows a short notice that HDMI works in those two apps.
  *
  * It sleeps on the kernel's uevent socket and on its control socket, and does
  * nothing in between. On plug-in (the hdmi switch) it reads the sink's EDID
@@ -15,7 +16,7 @@
  * frees everything, which stops the output. The output is also off while the
  * camera's own screen is off.
  *
- * Pictures arrive over /dev/socket/hdmid (stream, see docs/HDMI.md) already
+ * Pictures arrive over /dev/socket/hdmid (stream, hdmid_proto.h) already
  * scaled for the mode, in Android's ARGB_8888 memory order. They are copied,
  * red and blue swapped for the mixer, into physically contiguous ION memory
  * (the exynos contig heap, 16 MB in all) and shown centred, on the mixer's
@@ -60,6 +61,7 @@
 #include "edid.h"
 #include "font5x7.h"
 #include "hdmi_modes.h"
+#include "hdmid_proto.h"
 
 /* Old (3.4) ION userspace ABI, 32-bit */
 struct ion_allocation_data { size_t len; size_t align; unsigned int flags; void *handle; };
@@ -88,19 +90,15 @@ struct s5ptvfb_user_scaling { int ver; int hor; };
 #define TV_OUTPUT_HDMI_RGB 2
 #define TV_OUTPUT_DVI 3
 
+/* The video layer (s5p-tvout "Video Overlay"): the camera's live view */
+#define TV_VIDEO "/dev/video20"
+struct vo_src { void *base_y; void *base_c; struct v4l2_pix_format pix_fmt; };
+
 #define HDMI_STATE "/sys/class/switch/hdmi/state"
 #define DDC_BUS "/dev/i2c-5"
 #define PROP_MODE "persist.vendor.hdmi.mode"
 #define GALLERY_PACKAGE "com.simoneluconi.gcgallery"
-
-/* Control protocol (docs/HDMI.md): a 32-byte header, then len bytes */
-#define MSG_MAGIC 0x44484347u   /* "GCHD" */
-#define MSG_HELLO 1
-#define MSG_SHOW 2
-#define MSG_CLEAR 3
-#define MSG_SET_MODE 4
-#define MSG_STATE 16
-struct msg { uint32_t magic, type, len, a[5]; };
+#define AID_CAMERASERVER 1047   /* the camera HAL (camera provider service) */
 
 struct buf {
     void *handle;
@@ -124,8 +122,11 @@ static struct {
     struct buf idle;
     int layer_w, layer_h, layer_x, layer_y, layer_scaled;   /* layer_w 0: not set up */
     int layer_on;               /* unblanked */
-    int client;                 /* the connected gallery, or -1 */
-} st = {.ion = -1, .tv = -1, .fb = -1, .front = -1, .client = -1};
+    struct client { int fd; uid_t uid; } gallery, camera;   /* fd -1: none */
+    int vo;                     /* the video layer, open while camera frames come; -1 */
+    struct { uint32_t w, h, fourcc; } video;   /* its source format */
+    const struct client *video_owner;          /* who sends the frames */
+} st = {.ion = -1, .tv = -1, .fb = -1, .front = -1, .gallery = {-1, 0}, .camera = {-1, 0}, .vo = -1};
 
 static const struct buf no_buf = {NULL, -1, 0, 0, MAP_FAILED};
 
@@ -262,11 +263,12 @@ static int italian(void) {
 }
 
 static void show_idle(void) {
-    if (st.tv < 0) return;
+    /* The camera's frames are on screen: the notice waits for them to stop */
+    if (st.tv < 0 || st.vo >= 0) return;
     const int it = italian();
     const char *title = "GALAXY CAMERA REVIVED";
-    const char *l1 = it ? "PER ORA L'HDMI FUNZIONA SOLO IN GC GALLERY" : "FOR NOW HDMI WORKS ONLY IN GC GALLERY";
-    const char *l2 = it ? "APRI UNA FOTO PER VEDERLA QUI" : "OPEN A PHOTO THERE TO SEE IT HERE";
+    const char *l1 = it ? "L'HDMI FUNZIONA IN GC CAMERA E GC GALLERY" : "HDMI WORKS IN GC CAMERA AND GC GALLERY";
+    const char *l2 = it ? "APRI LA FOTOCAMERA O UNA FOTO PER VEDERLA QUI" : "OPEN THE CAMERA OR A PHOTO TO SEE IT HERE";
     char l3[64];
     snprintf(l3, sizeof(l3), "%s%s%s%s", st.edid.name, st.edid.name[0] ? " - " : "", st.mode->name,
              st.output == TV_OUTPUT_DVI ? " DVI" : "");
@@ -374,9 +376,122 @@ static void choose_mode(void) {
     st.output = st.edid.valid && !st.edid.hdmi ? TV_OUTPUT_DVI : TV_OUTPUT_HDMI_RGB;
 }
 
+/*
+ * --- The video layer: the camera's live view. The camera HAL hands over each
+ * preview frame's physical planes (FIMC memory, NV21); the video processor
+ * scales it to the mode in hardware, so a frame costs one ioctl. The graphic
+ * layer is off meanwhile and its buffers go back to the heap.
+ */
+
+static int video_src(uint32_t y, uint32_t c) {
+    struct v4l2_format f;
+    memset(&f, 0, sizeof(f));
+    f.type = V4L2_BUF_TYPE_PRIVATE;
+    struct vo_src *s = (struct vo_src *)f.fmt.raw_data;
+    s->base_y = (void *)(uintptr_t)y;
+    s->base_c = (void *)(uintptr_t)c;
+    s->pix_fmt.width = st.video.w;
+    s->pix_fmt.height = st.video.h;
+    s->pix_fmt.pixelformat = st.video.fourcc;
+    s->pix_fmt.field = V4L2_FIELD_NONE;
+    /* priv 0: the planes are used in place (non-zero copies them in the driver) */
+    if (ioctl(st.vo, VIDIOC_S_FMT, &f) < 0) { ALOGE("video S_FMT: %m"); return -1; }
+    return 0;
+}
+
+static void video_close(void) {
+    if (st.vo < 0) return;
+    int off = 0;
+    ioctl(st.vo, VIDIOC_OVERLAY, &off);
+    /* The release also turns the mixer's video layer off */
+    close(st.vo);
+    st.vo = -1;
+    memset(&st.video, 0, sizeof(st.video));
+}
+
+/*
+ * The frame's square pixels fitted into the mode, centred: a 4:3 preview is
+ * pillarboxed on a 16:9 screen. Even sizes and positions.
+ */
+static void video_rect(struct v4l2_rect *r) {
+    const struct hdmi_mode *m = st.mode;
+    double a = (double)st.video.w / st.video.h, dar = (double)m->dar_w / m->dar_h;
+    double fw = a >= dar ? 1.0 : a / dar, fh = a >= dar ? dar / a : 1.0;
+    int w = (int)(m->w * fw + 0.5) & ~1, h = (int)(m->h * fh + 0.5) & ~1;
+    r->left = ((m->w - w) / 2) & ~1;
+    r->top = ((m->h - h) / 2) & ~1;
+    r->width = w;
+    r->height = h;
+}
+
+static int video_open(uint32_t w, uint32_t h, uint32_t fourcc, uint32_t y, uint32_t c) {
+    video_close();
+    /* The graphic layer's notice or photo goes, and its memory with it */
+    layer_blank();
+    free_photos();
+    buf_free(&st.idle);
+    st.vo = open(TV_VIDEO, O_RDWR | O_CLOEXEC);
+    if (st.vo < 0) { ALOGE("open " TV_VIDEO ": %m"); return -1; }
+    st.video.w = w;
+    st.video.h = h;
+    st.video.fourcc = fourcc;
+    if (video_src(y, c) < 0) goto fail;
+    struct v4l2_crop crop;
+    memset(&crop, 0, sizeof(crop));
+    crop.type = V4L2_BUF_TYPE_PRIVATE;
+    crop.c.width = w;
+    crop.c.height = h;
+    if (ioctl(st.vo, VIDIOC_S_CROP, &crop) < 0) { ALOGE("video S_CROP: %m"); goto fail; }
+    struct v4l2_format f;
+    memset(&f, 0, sizeof(f));
+    f.type = V4L2_BUF_TYPE_VIDEO_OVERLAY;
+    video_rect(&f.fmt.win.w);
+    f.fmt.win.global_alpha = 0xff;
+    if (ioctl(st.vo, VIDIOC_S_FMT, &f) < 0) { ALOGE("video S_FMT overlay: %m"); goto fail; }
+    int on = 1;
+    if (ioctl(st.vo, VIDIOC_OVERLAY, &on) < 0) { ALOGE("video OVERLAY: %m"); goto fail; }
+    ALOGI("live view %ux%u on %dx%d at (%d,%d)", w, h, f.fmt.win.w.width, f.fmt.win.w.height,
+          f.fmt.win.w.left, f.fmt.win.w.top);
+    return 0;
+fail:
+    video_close();
+    return -1;
+}
+
+static void video_frame(const struct client *from, const struct hdmid_msg *m) {
+    uint32_t w = m->a[0], h = m->a[1], y = m->a[2], c = m->a[3], fourcc = m->a[4];
+    /* Physical addresses: the TV would show any memory they point at */
+    if (from->uid != 0 && from->uid != AID_CAMERASERVER) {
+        ALOGW("video frame from uid %u refused", (unsigned)from->uid);
+        return;
+    }
+    /* Its memory lives as long as its connection: see drop_client() */
+    st.video_owner = from;
+    if (st.tv < 0 || !st.mode) return;
+    if (w < 16 || h < 16 || w > 1920 || h > 1088 || (w | h) & 1 || !y || !c ||
+        (fourcc != V4L2_PIX_FMT_NV21 && fourcc != V4L2_PIX_FMT_NV12)) {
+        ALOGW("video frame %ux%u %08x refused", w, h, fourcc);
+        return;
+    }
+    if (st.vo >= 0 && w == st.video.w && h == st.video.h && fourcc == st.video.fourcc) {
+        /* The address takes effect at the next vsync */
+        if (video_src(y, c) < 0) video_close();
+        return;
+    }
+    video_open(w, h, fourcc, y, c);
+}
+
+static void video_stop(void) {
+    if (st.vo < 0) return;
+    video_close();
+    ALOGI("live view off");
+    show_idle();
+}
+
 /* --- The TV output */
 
 static void tv_stop(void) {
+    video_close();
     layer_blank();
     free_photos();
     buf_free(&st.idle);
@@ -466,9 +581,9 @@ static int skip(int fd, size_t n) {
     return 0;
 }
 
-/* Tells the gallery whether a TV is on, its mode, and the modes it can choose. */
-static void send_state(void) {
-    if (st.client < 0) return;
+/* Tells a client whether a TV is on, its mode, and the modes it can choose. */
+static void send_state_to(const struct client *cl) {
+    if (cl->fd < 0) return;
     char text[2048];
     int n = 0;
     int on = st.tv >= 0;
@@ -482,23 +597,27 @@ static void send_state(void) {
             n += snprintf(text + n, sizeof(text) - n, "%s%s:%d", i ? "," : "", hdmi_modes[i].name, sink_lists(&hdmi_modes[i]));
         n += snprintf(text + n, sizeof(text) - n, "\n");
     }
-    struct msg h = {MSG_MAGIC, MSG_STATE, (uint32_t)n, {0}};
-    if (write_full(st.client, &h, sizeof(h)) < 0 || write_full(st.client, text, (size_t)n) < 0)
-        ALOGW("state to the gallery: %m");
+    struct hdmid_msg h = {HDMID_MAGIC, HDMID_STATE, (uint32_t)n, {0}};
+    if (write_full(cl->fd, &h, sizeof(h)) < 0 || write_full(cl->fd, text, (size_t)n) < 0)
+        ALOGW("state to %s: %m", cl == &st.camera ? "the camera" : "the gallery");
+}
+
+static void send_state(void) {
+    send_state_to(&st.gallery);
+    send_state_to(&st.camera);
 }
 
 /*
  * A w x h picture follows on the socket: into the buffer not on screen, centred
  * in a full-screen layer, then shown at the next vsync. The layer never changes
- * size for a new photo, so nothing blanks. With SHOW_HALF the picture is for a
- * half-size layer the mixer doubles: cheap frames while a zoom or pan moves.
+ * size for a new photo, so nothing blanks. With HDMID_SHOW_HALF the picture is
+ * for a half-size layer the mixer doubles: cheap frames while a zoom or pan
+ * moves. Ignored while the camera's live view is on.
  */
-#define SHOW_HALF 1
-
 static int show_photo(int fd, uint32_t w, uint32_t h, uint32_t len, uint32_t flags) {
-    int half = (flags & SHOW_HALF) != 0;
+    int half = (flags & HDMID_SHOW_HALF) != 0;
     /* st.mode is NULL until the first plug-in */
-    if (st.tv < 0 || !st.mode) return skip(fd, len);
+    if (st.tv < 0 || !st.mode || st.vo >= 0) return skip(fd, len);
     int lw = half ? st.mode->w / 2 : st.mode->w, lh = half ? st.mode->h / 2 : st.mode->h;
     if (w == 0 || h == 0 || w > (uint32_t)lw || h > (uint32_t)lh || len != w * h * 4) {
         ALOGW("picture %ux%u (%u bytes) refused", w, h, len);
@@ -537,54 +656,72 @@ static void set_mode(const char *name) {
     /* The same choice again: no restart, the TV would re-sync for nothing */
     if (m ? (!st.automatic && m == st.mode) : st.automatic) return;
     tv_stop();
-    if (tv_start() == 0 && st.client < 0) show_idle();
+    /* The camera's next frame brings the live view back */
+    if (tv_start() == 0 && st.gallery.fd < 0) show_idle();
 }
 
-static void drop_client(void) {
-    if (st.client < 0) return;
-    close(st.client);
-    st.client = -1;
-    ALOGI("gallery gone");
+static void drop_client(struct client *cl) {
+    if (cl->fd < 0) return;
+    close(cl->fd);
+    cl->fd = -1;
+    ALOGI("%s gone", cl == &st.camera ? "camera" : "gallery");
+    /* The frames' memory may go with the sender: the video layer must not read it */
+    if (st.video_owner == cl) {
+        st.video_owner = NULL;
+        video_stop();
+    }
     show_idle();
 }
 
-/* One message from the gallery; -1 when the connection is over. */
-static int handle_client(void) {
-    struct msg h;
-    if (read_full(st.client, &h, sizeof(h)) < 0 || h.magic != MSG_MAGIC) return -1;
+/* One message from a client; -1 when the connection is over. */
+static int handle_client(struct client *cl) {
+    struct hdmid_msg h;
+    int fd = cl->fd;
+    if (read_full(fd, &h, sizeof(h)) < 0 || h.magic != HDMID_MAGIC) return -1;
     switch (h.type) {
-    case MSG_HELLO:
-        if (skip(st.client, h.len) < 0) return -1;
-        send_state();
+    case HDMID_HELLO:
+        if (skip(fd, h.len) < 0) return -1;
+        send_state_to(cl);
         return 0;
-    case MSG_SHOW:
-        return show_photo(st.client, h.a[0], h.a[1], h.len, h.a[2]);
-    case MSG_CLEAR:
-        if (skip(st.client, h.len) < 0) return -1;
+    case HDMID_SHOW:
+        return show_photo(fd, h.a[0], h.a[1], h.len, h.a[2]);
+    case HDMID_CLEAR:
+        if (skip(fd, h.len) < 0) return -1;
         show_idle();
         return 0;
-    case MSG_SET_MODE: {
+    case HDMID_SET_MODE: {
         char name[32] = "";
         if (h.len >= sizeof(name)) return -1;
-        if (read_full(st.client, name, h.len) < 0) return -1;
+        if (read_full(fd, name, h.len) < 0) return -1;
         name[h.len] = '\0';
         set_mode(name);
         send_state();
         return 0;
     }
+    case HDMID_VIDEO:
+        if (skip(fd, h.len) < 0) return -1;
+        video_frame(cl, &h);
+        return 0;
+    case HDMID_VIDEO_STOP:
+        if (skip(fd, h.len) < 0) return -1;
+        video_stop();
+        return 0;
     default:
-        return skip(st.client, h.len);
+        return skip(fd, h.len);
     }
 }
 
-/* Only GC Gallery (and root, system and shell, for tests) may drive the TV. */
-static int allowed(int fd) {
+/*
+ * Only GC Gallery, the camera HAL (and root, system and shell, for tests) may
+ * drive the TV. The uid, or -1 when refused.
+ */
+static long allowed(int fd) {
     struct ucred cred;
     socklen_t l = sizeof(cred);
-    if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &l) < 0) return 0;
-    if (cred.uid == 0 || cred.uid == 1000 || cred.uid == 2000) return 1;
+    if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &l) < 0) return -1;
+    if (cred.uid == 0 || cred.uid == 1000 || cred.uid == 2000 || cred.uid == AID_CAMERASERVER) return cred.uid;
     FILE *f = fopen("/data/system/packages.list", "re");
-    if (!f) return 0;
+    if (!f) return -1;
     char line[512], pkg[256];
     unsigned uid;
     int ok = 0;
@@ -592,13 +729,18 @@ static int allowed(int fd) {
         if (sscanf(line, "%255s %u", pkg, &uid) == 2 && !strcmp(pkg, GALLERY_PACKAGE) && uid == cred.uid) ok = 1;
     fclose(f);
     if (!ok) ALOGW("uid %u may not use the TV", cred.uid);
-    return ok;
+    return ok ? (long)cred.uid : -1;
 }
 
+/*
+ * The camera HAL has its own slot, so the gallery and the camera can overlap
+ * while one activity hands over to the other. Anyone else takes the gallery's.
+ */
 static void accept_client(int lsock) {
     int fd = accept4(lsock, NULL, NULL, SOCK_CLOEXEC);
     if (fd < 0) return;
-    if (!allowed(fd)) {
+    long uid = allowed(fd);
+    if (uid < 0) {
         close(fd);
         return;
     }
@@ -606,10 +748,20 @@ static void accept_client(int lsock) {
     struct timeval tv = {3, 0};
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-    if (st.client >= 0) close(st.client);
-    st.client = fd;
-    ALOGI("gallery connected");
-    send_state();
+    struct client *cl = uid == AID_CAMERASERVER ? &st.camera : &st.gallery;
+    if (cl->fd >= 0) {
+        /* Replaced: what it showed stays until the new client sends, but not frames
+         * from memory that may go with it */
+        close(cl->fd);
+        if (st.video_owner == cl) {
+            st.video_owner = NULL;
+            video_stop();
+        }
+    }
+    cl->fd = fd;
+    cl->uid = (uid_t)uid;
+    ALOGI("%s connected", cl == &st.camera ? "camera" : "gallery");
+    send_state_to(cl);
 }
 
 /*
@@ -626,7 +778,8 @@ static void update_output(void) {
     if (want == (st.tv >= 0)) return;
     if (want) {
         if (tv_start() < 0) return;
-        if (st.client < 0) show_idle();
+        /* The gallery sends its photo again on the state below, the camera its next frame */
+        if (st.gallery.fd < 0) show_idle();
     } else {
         tv_stop();
         ALOGI("output off (%s)", plugged ? "screen off" : "unplugged");
@@ -760,9 +913,10 @@ int main(void) {
     set_plugged(read_state());
 
     for (;;) {
-        struct pollfd p[4] = {{uev, POLLIN, 0}, {lsock, POLLIN, 0}, {screen_pipe[0], POLLIN, 0}, {st.client, POLLIN, 0}};
-        int n = st.client >= 0 ? 4 : 3;
-        if (poll(p, n, -1) < 0) {
+        /* A negative fd is ignored by poll() */
+        struct pollfd p[5] = {{uev, POLLIN, 0}, {lsock, POLLIN, 0}, {screen_pipe[0], POLLIN, 0},
+                              {st.gallery.fd, POLLIN, 0}, {st.camera.fd, POLLIN, 0}};
+        if (poll(p, 5, -1) < 0) {
             if (errno == EINTR) continue;
             ALOGE("poll: %m");
             return 1;
@@ -770,10 +924,13 @@ int main(void) {
         if (p[0].revents & POLLIN) handle_uevent(uev);
         if (p[1].revents & POLLIN) accept_client(lsock);
         if (p[2].revents & POLLIN) handle_screen();
-        /* Only if the client polled is still the client: an accept may have replaced it */
-        if (n == 4 && p[3].revents && p[3].fd == st.client) {
-            if ((p[3].revents & (POLLHUP | POLLERR)) && !(p[3].revents & POLLIN)) drop_client();
-            else if (handle_client() < 0) drop_client();
+        struct client *cls[2] = {&st.gallery, &st.camera};
+        for (int i = 0; i < 2; i++) {
+            struct client *cl = cls[i];
+            /* Only if the fd polled is still the client's: an accept may have replaced it */
+            if (p[3 + i].fd < 0 || !p[3 + i].revents || p[3 + i].fd != cl->fd) continue;
+            if ((p[3 + i].revents & (POLLHUP | POLLERR)) && !(p[3 + i].revents & POLLIN)) drop_client(cl);
+            else if (handle_client(cl) < 0) drop_client(cl);
         }
     }
 }

@@ -31,10 +31,12 @@ LOCAL_SRC_FILES := \
 	exynos_utils.c \
 	exynos_v4l2.c \
 	exynos_v4l2_output.c \
-	exynos_ion.c
+	exynos_ion.c \
+	exynos_hdmi.c
 
 LOCAL_C_INCLUDES := \
 	$(LOCAL_PATH)/include \
+	$(LOCAL_PATH)/../hdmid \
 	system/media/camera/include \
 	hardware/samsung/exynos4/hal/include
 

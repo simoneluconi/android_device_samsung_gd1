@@ -5,8 +5,9 @@
 /vendor/bin/nfc-field-notice                                           u:object_r:nfc_field_notice_exec:s0
 /vendor/bin/hw/android\.hardware\.gnss@1\.0-service\.exynos4           u:object_r:hal_gnss_default_exec:s0
 
-# HDMI DDC (EDID) bus, used by hdmid
+# HDMI DDC (EDID) bus, used by hdmid, and its control socket
 /dev/i2c-5                                                             u:object_r:hdmi_ddc_device:s0
+/dev/socket/hdmid                                                      u:object_r:hdmid_socket:s0
 
 # XMM6262 modem nodes (modem_if): rild talks IPC on umts_ipc0, cbd boots the modem
 /dev/umts_.*                                                           u:object_r:radio_device:s0

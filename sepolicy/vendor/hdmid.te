@@ -7,6 +7,9 @@ type hdmid_exec, exec_type, vendor_file_type, file_type;
 # The DDC bus to the sink, for its EDID (/dev/i2c-5)
 type hdmi_ddc_device, dev_type;
 
+# Its control socket (/dev/socket/hdmid)
+type hdmid_socket, file_type;
+
 init_daemon_domain(hdmid)
 permissive hdmid;
 
@@ -21,3 +24,14 @@ allow hdmid graphics_device:dir search;
 allow hdmid graphics_device:chr_file rw_file_perms;
 allow hdmid ion_device:chr_file rw_file_perms;
 allow hdmid hdmi_ddc_device:chr_file rw_file_perms;
+
+# vendor.hdmi.* and persist.vendor.hdmi.mode; the screen state and the locale
+set_prop(hdmid, vendor_default_prop)
+get_prop(hdmid, default_prop)
+
+# Which uid GC Gallery has
+allow hdmid packages_list_file:file r_file_perms;
+
+# The camera HAL sends the live view (camera/exynos_hdmi.c). GC Gallery, an
+# untrusted_app, connects too; vendor policy cannot grant apps a vendor socket.
+unix_socket_connect(hal_camera_default, hdmid, hdmid)

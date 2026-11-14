@@ -27,3 +27,11 @@ cc_binary {
     include_dirs: ["device/samsung/gd1/hdmid"],
     installable: false,
 }
+
+cc_binary {
+    name: "gd1_hdmivideo",
+    srcs: ["hdmivideo.c"],
+    include_dirs: ["device/samsung/gd1/hdmid"],
+    shared_libs: ["libcutils"],
+    installable: false,
+}
