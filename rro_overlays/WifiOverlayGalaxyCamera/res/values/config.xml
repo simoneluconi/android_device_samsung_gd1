@@ -5,32 +5,6 @@
 -->
 <resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
     <!--
-        Fall back to 2.4 GHz when a 5 GHz access point rejects us.
-
-        On both the GC100 and the GC200 a 5 GHz join fails at the 802.11
-        auth step ("authentication failure, no ack", association rejection
-        status 1), with our stack and with Samsung's complete stock Wi-Fi
-        stack alike (docs/TODO.md). Android prefers 5 GHz BSSIDs for their
-        signal, and by default it blocks a BSSID only after 3 rejections,
-        when the same 3 rejections also disable the whole network: the
-        camera never got to the network's 2.4 GHz BSSIDs and stayed offline.
-
-        Block a rejecting BSSID at once, so the next attempt goes to another
-        BSSID of the same network, and disable the network only after many
-        rejections (a mesh can have several 5 GHz BSSIDs to go through).
-    -->
-    <integer translatable="false" name="config_wifiBssidBlocklistMonitorAssociationRejectionThreshold">1</integer>
-    <integer translatable="false" name="config_wifiDisableReasonAssociationRejectionThreshold">20</integer>
-    <!--
-        After 5 consecutive failures (hardcoded) Android disables the network
-        for this long. The GC100 reaches 5 on the 5 GHz BSSIDs of a mesh
-        before it gets to 2.4 GHz, and then stayed offline for 5 minutes.
-        The rejecting BSSIDs stay blocked meanwhile, so after the pause the
-        next attempt goes to 2.4 GHz.
-    -->
-    <integer translatable="false" name="config_wifiDisableReasonConsecutiveFailuresDurationMs">15000</integer>
-
-    <!--
         Wi-Fi country code from where the camera is. The GC100 takes it from
         its SIM; the GC200 has no modem, and without Google services there
         is no geocoder, so Android had no country at all. Take it from the
@@ -40,9 +14,10 @@
     <bool translatable="false" name="config_wifiUpdateCountryCodeFromScanResultGeneric">true</bool>
 
     <!--
-        No 5 GHz hotspot. The radio cannot transmit on 5 GHz (above), and the
-        5 GHz SoftAP did not even start ("Failed to set country code"), so
-        the hotspot settings offer 2.4 GHz only.
+        No 5 GHz hotspot. The cameras are 2.4 GHz only: the kernel's bcmdhd
+        registers no 5 GHz band (on both the GC100 and the GC200 a 5 GHz
+        join fails at the 802.11 auth step, with Samsung's stock Wi-Fi stack
+        too; docs/TODO.md), so the hotspot settings offer 2.4 GHz only.
     -->
     <bool translatable="false" name="config_wifiSoftap5ghzSupported">false</bool>
 </resources>
